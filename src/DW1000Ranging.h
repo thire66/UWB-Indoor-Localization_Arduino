@@ -71,7 +71,6 @@
 #endif
 
 
-
 class DW1000RangingClass {
 public:
 	//variables
@@ -181,27 +180,6 @@ private:
 	static void handleReceived();
 	static void noteActivity();
 	static void resetInactive();
-
-	//handle_sentAck
-	static void handle_sentAck();
-	static void handleAnchorSentAck(int messageType);
-	static void handleTagSentAck(int messageType);
-	static void updatePollTime(const DW1000Time& sentTime);
-	static void updateRangeTime(const DW1000Time& sentTime);
-	static void updateDeviceTime(byte* address, DW1000Time DW1000Device::* timeField, const DW1000Time& sentTime);
-	static bool isBroadcast(byte* address);
-	
-	//handle_receivedAck
-	static void handle_receivedAck();
-	static void handleAnchorReceivedAck(int messageType, byte* data);
-    static void handleTagReceivedAck(int messageType, byte* data);
-    static void handleBlinkMessage(byte* data);
-    static void handlePollMessage(byte* data);
-    static void handleRangeMessage(byte* data);
-    static void handlePollAckMessage(byte* data);
-    static void handleRangeReportMessage(byte* data);
-    static void handleRangeFailedMessage();
-
 	
 	//global functions:
 	static void checkForReset();
@@ -222,7 +200,6 @@ private:
 	//for ranging protocole (TAG)
 	static void transmitPoll(DW1000Device* myDistantDevice);
 	static void transmitRange(DW1000Device* myDistantDevice);
-	
 	
 	//methods for range computation
 	static void computeRangeAsymmetric(DW1000Device* myDistantDevice, DW1000Time* myTOF);
