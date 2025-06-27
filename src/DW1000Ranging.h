@@ -49,7 +49,7 @@ enum MessageType {
 #define LEN_DATA 256
 
 //Max devices we put in the networkDevices array ! Each DW1000Device is 74 Bytes in SRAM memory for now.
-#define MAX_DEVICES 8 //
+#define MAX_DEVICES 8 
 
 //Default Pin for module:
 #define DEFAULT_RST_PIN 9

@@ -131,6 +131,7 @@ void DW1000RangingClass::configureNetwork(uint16_t deviceAddress, uint16_t netwo
 	DW1000.setNetworkId(networkId);
 	DW1000.setChannel(channel);
 	DW1000.enableMode(mode);
+	DW1000.useExtendedFrameLength(true);
 	DW1000.commitConfiguration();
 }
 
@@ -869,14 +870,14 @@ void DW1000RangingClass::transmit(byte datas[], uint16_t len) {
 // Tag & Anchor
 void DW1000RangingClass::transmit(byte datas[], DW1000Time time) {
 	DW1000.setDelay(time);
-	DW1000.setData(data, LEN_DATA);
+	DW1000.setData(datas, LEN_DATA);
 	DW1000.startTransmit();
 }
 
 // Tag & Anchor
 void DW1000RangingClass::transmit(byte datas[], uint16_t len, DW1000Time time) {
 	DW1000.setDelay(time);
-	DW1000.setData(data, len);
+	DW1000.setData(datas, len);
 	DW1000.startTransmit();
 }
 
