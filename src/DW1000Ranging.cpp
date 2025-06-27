@@ -271,9 +271,12 @@ boolean DW1000RangingClass::addNetworkDevices(DW1000Device* device, boolean shor
 
 // Tag & Anchor
 boolean DW1000RangingClass::addNetworkDevices(DW1000Device* device) {
-    // Check if the device already exists in the network
+    if (_networkDevicesNumber >= MAX_DEVICES) 
+		return false;
+	
+	// Check if the device already exists in the network
     for (uint8_t i = 0; i < _networkDevicesNumber; ++i) {
-        if (_networkDevices[i].isAddressEqual(device) && _networkDevices[i].isShortAddressEqual(device)) {
+        if (_networkDevices[i].isAddressEqual(device) || _networkDevices[i].isShortAddressEqual(device)) {
             // The device already exists, do not add it again
             return false;
         }
