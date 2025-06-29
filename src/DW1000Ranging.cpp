@@ -132,6 +132,12 @@ void DW1000RangingClass::configureNetwork(uint16_t deviceAddress, uint16_t netwo
 	DW1000.setChannel(channel);
 	DW1000.enableMode(mode);
 	DW1000.useExtendedFrameLength(true);
+	DW1000.enableDebounceClock();
+	DW1000.setGPIOMode(LEDRXOK, LED_MODE); // RXOKLED-Modus für GPIO0
+	DW1000.setGPIOMode(LEDSFD,  LED_MODE); // SFDLED-Modus für GPIO1
+	DW1000.setGPIOMode(LEDRX,   LED_MODE); // RXLED-Modus für GPIO2
+	DW1000.setGPIOMode(LEDTX,   LED_MODE); // TXLED-Modus für GPIO3
+	DW1000.enableLedBlinking();
 	DW1000.commitConfiguration();
 }
 

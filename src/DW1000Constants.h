@@ -267,6 +267,7 @@
 #define GPDCE_BIT 18
 #define KHZCLKEN_BIT 23
 #define BLNKEN 8
+#define EN 9
 
 #define ATXSLP_BIT 11
 #define ARXSLP_BIT 12
@@ -290,7 +291,12 @@
 #define MSGP7 20
 #define MSGP8 22
 
-#define GPIO_MODE 0
-#define LED_MODE 1
+#define GPIO_MODE 0b00
+#define LED_MODE 0b01
+
+#define LEDRXOK   0   // GPIO0: RXOKLED (Frame mit gutem CRC empfangen)
+#define LEDSFD    1   // GPIO1: SFDLED  (SFD erkannt)
+#define LEDRX     2   // GPIO2: RXLED   (Empfänger aktiv)
+#define LEDTX     3   // GPIO3: TXLED   (Sender aktiv)
 
 #endif
