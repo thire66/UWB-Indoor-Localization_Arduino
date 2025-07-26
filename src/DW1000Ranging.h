@@ -108,8 +108,8 @@ public:
 	
 	//ranging functions
 	static MessageType detectMessageType(const byte datas[]); // TODO check return type
-	static void loop();
-	static void handlePeriodicTasks(uint32_t currentTime);
+	static void loop(bool uwbSlot);
+	static void handlePeriodicTasks(uint32_t currentTime, bool uwbSlot);
 	static void useRangeFilter(boolean enabled);
 	// Used for the smoothing algorithm (Exponential Moving Average). newValue must be >= 2. Default 15.
 	static void setRangeFilterValue(uint16_t newValue);
@@ -127,6 +127,10 @@ public:
 	static void visualizeDatas(byte datas[]);
 
 private:
+	static DW1000Device* _lastSlotDevices[4];    // Die 4 Devices des aktuellen Slots
+	static uint8_t _lastSlotDeviceCount;         // wie viele Devices im Slot sind
+	static bool _slotPollAcksReceived[4];        // Für dieses Slot-Set: ACK erhalten?
+
 	//other devices in the network
 	static DW1000Device _networkDevices[MAX_DEVICES];
 	static volatile uint8_t _networkDevicesNumber;
@@ -213,10 +217,8 @@ private:
 	static void receiver();
 	
 	//for ranging protocole (TAG)
-	static void transmitPoll(DW1000Device* myDistantDevice);
-	static DeviceIndices calculateDeviceIndices(bool timeslot);
-	static void transmitRange(DW1000Device* myDistantDevice);
-	static void transmitRange_2(bool timeslot);
+	static void transmitPoll(bool uwbSlot);
+	static void transmitRange();
 
 	//methods for range computation
 	static void computeRangeAsymmetric(DW1000Device* myDistantDevice, DW1000Time* myTOF);
@@ -238,6 +240,10 @@ private:
 	static void processTagMessage(MessageType messageType, DW1000Device* myDistantDevice);
 	static void handleRangeReport(DW1000Device* device);
 	static void handlePollAck(DW1000Device* device);
+
+	static bool isFirstBlock(uint16_t shortAddr);
+	static bool isSecondBlock(uint16_t shortAddr);
+    
 
 
 };

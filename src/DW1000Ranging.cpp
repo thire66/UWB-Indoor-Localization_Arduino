@@ -35,11 +35,19 @@ DW1000RangingClass DW1000Ranging;
 
 //other devices we are going to communicate with which are on our network:
 DW1000Device DW1000RangingClass::_networkDevices[MAX_DEVICES];
+
+
 byte         DW1000RangingClass::_currentAddress[8];
 byte         DW1000RangingClass::_currentShortAddress[2];
 byte         DW1000RangingClass::_lastSentToShortAddress[2];
 
 byte DW1000RangingClass::_channel;
+
+DW1000Device* DW1000RangingClass::_lastSlotDevices[4];    // Die 4 Devices des aktuellen Slots
+uint8_t DW1000RangingClass::_lastSlotDeviceCount = 0;     // wie viele Devices im Slot sind
+bool DW1000RangingClass::_slotPollAcksReceived[4];        // Für dieses Slot-Set: ACK erhalten?
+
+
 
 volatile uint8_t DW1000RangingClass::_networkDevicesNumber = 0; // TODO short, 8bit?
 int16_t      DW1000RangingClass::_lastDistantDevice    = 0; // TODO short, 8bit?
@@ -415,16 +423,16 @@ MessageType DW1000RangingClass::detectMessageType(const byte datas[]) {
 }
 
 // Tag & Anchor
-void DW1000RangingClass::loop() {
+void DW1000RangingClass::loop(bool uwbSlot) {
     uint32_t currentTime = (esp_timer_get_time() / MICROS_TO_MILLIS);
     checkForReset();
-	handlePeriodicTasks((esp_timer_get_time() / MICROS_TO_MILLIS)); 
+	handlePeriodicTasks(currentTime, uwbSlot); 
     handleSentAck();         // Handle the sending of ACKs
     handleReceivedMessage(); // Handle received messages
 }
 
 // Tag & Anchor
-void DW1000RangingClass::handlePeriodicTasks(uint32_t currentTime) {
+void DW1000RangingClass::handlePeriodicTasks(uint32_t currentTime, bool uwbSlot) {
     // Check if timer has expired
     
 	if (currentTime - timer < _timerDelay) {
@@ -438,7 +446,7 @@ void DW1000RangingClass::handlePeriodicTasks(uint32_t currentTime) {
             transmitBlink(); // Sending Blink signal
         } else if ( _networkDevicesNumber > 0){
 			_expectedMsgId = POLL_ACK;
-			transmitPoll(nullptr);
+			transmitPoll(uwbSlot);
 		}
     }
 
@@ -767,13 +775,27 @@ void DW1000RangingClass::processTagMessage(MessageType messageType, DW1000Device
 void DW1000RangingClass::handlePollAck(DW1000Device* device) {
     DW1000.getReceiveTimestamp(device->timePollAckReceived);
     device->noteActivity();
-    if (device->getIndex() == _networkDevicesNumber - 1) {
+    // Prüfe, ob dieses device zu den Slot-Devices gehört:
+    for(uint8_t i = 0; i < _lastSlotDeviceCount; i++) {
+        if (device == _lastSlotDevices[i]) {
+            _slotPollAcksReceived[i] = true;
+            break;
+        }
+    }
+    // Jetzt checken, ob **alle** ACKs aus dem aktuellen Slot schon da sind:
+    bool allAcks = true;
+    for(uint8_t i = 0; i < _lastSlotDeviceCount; i++) {
+        if (!_slotPollAcksReceived[i]) {
+            allAcks = false;
+            break;
+        }
+    }
+    if (allAcks) {
         _expectedMsgId = RANGE_REPORT;
-        transmitRange(nullptr);
-		//transmitRange_2(isMyTimeSlot());
-		//transmitRange(device);
+        transmitRange(); // Range nur für diesen Slot!
     }
 }
+
 
 // Tag
 void DW1000RangingClass::handleRangeReport(DW1000Device* device) {
@@ -789,15 +811,16 @@ void DW1000RangingClass::handleRangeReport(DW1000Device* device) {
     device->setRXPower(curRXPower);
 
     _lastDistantDevice = device->getIndex();
+
     if (_handleNewRange) {
         (*_handleNewRange)();
     }
 
-    if(DEBUG){
-        Serial.printf("\nRange: %.2f m, RX Power: %.2f dBm\n", curRange, curRXPower);
+    if (DEBUG) {
+        Serial.printf("\nRange: %.2f m, RX Power: %.2f dBm (Device: 0x%02X)\n",
+                      curRange, curRXPower, device->getShortAddress());
     }
 }
-
 
 void DW1000RangingClass::useRangeFilter(boolean enabled) {
 	_useRangeFilter = enabled;
@@ -907,82 +930,49 @@ void DW1000RangingClass::transmitRangingInit(DW1000Device* myDistantDevice) {
 }
 
 //Tag - broadcast
-void DW1000RangingClass::transmitPoll(DW1000Device* myDistantDevice) {
-	
-	transmitInit();
-	
-	if(myDistantDevice == nullptr) {
-		//we need to set our timerDelay:
-		_timerDelay = DEFAULT_TIMER_DELAY+(uint16_t)(_networkDevicesNumber*3*DEFAULT_REPLY_DELAY_TIME/MICROS_TO_MILLIS);
-		
-		byte shortBroadcast[2] = {0xFF, 0xFF};
-		_globalMac.generateShortMACFrame(data, _currentShortAddress, shortBroadcast);
-		data[SHORT_MAC_LEN]   = POLL;
-		//we enter the number of devices
-		data[SHORT_MAC_LEN+1] = _networkDevicesNumber;
-		
-		for(uint8_t i = 0; i < _networkDevicesNumber; i++) {
-			//each devices have a different reply delay time.
-			_networkDevices[i].setReplyTime((2*i+1)*DEFAULT_REPLY_DELAY_TIME);
-			//we write the short address of our device:
-			memcpy(data+SHORT_MAC_LEN+2+kPollDeviceSize*i, _networkDevices[i].getByteShortAddress(), 2);
-			//we add the replyTime
-			uint16_t replyTime = _networkDevices[i].getReplyTime();
-			memcpy(data+SHORT_MAC_LEN+2+2+kPollDeviceSize*i, &replyTime, 2);
-			
-		}
-		
-		copyShortAddress(_lastSentToShortAddress, shortBroadcast);
-		transmit(data, SHORT_MAC_LEN+2+kPollDeviceSize*_networkDevicesNumber);
-		
-	}
-	else {
-		//we redefine our default_timer_delay for just 1 device;
-		_timerDelay = DEFAULT_TIMER_DELAY;
-		
-		_globalMac.generateShortMACFrame(data, _currentShortAddress, myDistantDevice->getByteShortAddress());
-		
-		data[SHORT_MAC_LEN]   = POLL;
-		data[SHORT_MAC_LEN+1] = 1;
-		uint16_t replyTime = myDistantDevice->getReplyTime();
-		memcpy(data+SHORT_MAC_LEN+2, &replyTime, sizeof(uint16_t)); // todo is code correct?
-		
-		copyShortAddress(_lastSentToShortAddress, myDistantDevice->getByteShortAddress());
-		transmit(data, SHORT_MAC_LEN+2+kPollDeviceSize);
-	}
-	
-}
+void DW1000RangingClass::transmitPoll(bool uwbSlot) {
+    transmitInit();
 
-//Tag
-DeviceIndices DW1000RangingClass::calculateDeviceIndices(bool timeslot) {
-    DeviceIndices result = {255, 255, 0};
+    // Baue Liste der im Slot gewollten Anchors
+    DW1000Device* slotDevices[4]; // maximal 4 pro Slot
+    uint8_t slotDeviceCount = 0;
 
-    switch (_networkDevicesNumber) {
-        case 1:
-            if (timeslot) {
-                result.deviceCount = 1;
-                result.startIndex = 0;
-                result.endIndex = 0;
-            }
-            break;
-        case 2:
-            result.deviceCount = 1;
-            result.startIndex = timeslot ? 0 : 1;
-            result.endIndex = result.startIndex;
-            break;
-        case 3:
-            result.deviceCount = timeslot ? 2 : 1;
-            result.startIndex = timeslot ? 0 : 2;
-            result.endIndex = timeslot ? 1 : 2;
-            break;
-        case 4:
-            result.deviceCount = 2;
-            result.startIndex = timeslot ? 0 : 2;
-            result.endIndex = timeslot ? 1 : 3;
-            break;
+    for(uint8_t i = 0; i < _networkDevicesNumber; i++) {
+        uint16_t addr = _networkDevices[i].getShortAddress();
+        if( ( uwbSlot && isFirstBlock(addr) ) ||
+            (!uwbSlot && isSecondBlock(addr) ) )
+        {
+            if(slotDeviceCount < 4)
+                slotDevices[slotDeviceCount++] = &_networkDevices[i];
+        }
     }
-    return result;
+
+    // Setze Timer-Delays abhängig von aktiver Slot-Größe
+    _timerDelay = DEFAULT_TIMER_DELAY + (uint16_t)(slotDeviceCount*3*DEFAULT_REPLY_DELAY_TIME/MICROS_TO_MILLIS);
+
+    byte shortBroadcast[2] = {0xFF, 0xFF};
+    _globalMac.generateShortMACFrame(data, _currentShortAddress, shortBroadcast);
+    data[SHORT_MAC_LEN]   = POLL;
+    data[SHORT_MAC_LEN+1] = slotDeviceCount;
+
+    // Füge nur die slotgewählten Devices an!
+    for(uint8_t i = 0; i < slotDeviceCount; i++) {
+        // Reply-Delays für jedes Slot-Device setzen
+        slotDevices[i]->setReplyTime((2*i+1)*DEFAULT_REPLY_DELAY_TIME);
+        memcpy(data + SHORT_MAC_LEN+2 + kPollDeviceSize*i, slotDevices[i]->getByteShortAddress(), 2);
+        uint16_t replyTime = slotDevices[i]->getReplyTime();
+        memcpy(data + SHORT_MAC_LEN+2 + 2 + kPollDeviceSize*i, &replyTime, 2);
+    }
+	for(int i=0; i<slotDeviceCount; i++) {
+		_lastSlotDevices[i] = slotDevices[i];
+		_slotPollAcksReceived[i] = false;
+	}
+	_lastSlotDeviceCount = slotDeviceCount;
+
+    copyShortAddress(_lastSentToShortAddress, shortBroadcast);
+    transmit(data, SHORT_MAC_LEN+2+kPollDeviceSize*slotDeviceCount);
 }
+
 
 //Anchor
 void DW1000RangingClass::transmitPollAck(DW1000Device* myDistantDevice) {
@@ -997,92 +987,37 @@ void DW1000RangingClass::transmitPollAck(DW1000Device* myDistantDevice) {
 }
 
 //Tag
-void DW1000RangingClass::transmitRange(DW1000Device* myDistantDevice) {
-	//transmit range need to accept broadcast for multiple anchor
-	transmitInit();
-	
-	if(myDistantDevice == nullptr) {
-		//we need to set our timerDelay:
-		_timerDelay = DEFAULT_TIMER_DELAY+(uint16_t)(_networkDevicesNumber*3*DEFAULT_REPLY_DELAY_TIME/MICROS_TO_MILLIS);
-		byte shortBroadcast[2] = {0xFF, 0xFF};
-		_globalMac.generateShortMACFrame(data, _currentShortAddress, shortBroadcast);
-		data[SHORT_MAC_LEN]   = RANGE;
-		//we enter the number of devices
-		data[SHORT_MAC_LEN + 1] = _networkDevicesNumber;
-		// delay sending the message and remember expected future sent timestamp
-		DW1000Time deltaTime     = DW1000Time(DEFAULT_REPLY_DELAY_TIME, DW1000Time::MICROSECONDS);
-		DW1000Time timeRangeSent = DW1000.setDelay(deltaTime);
-		
-		for(uint8_t i = 0; i < _networkDevicesNumber; i++) {
-			//we write the short address of our device:
-			memcpy(data + SHORT_MAC_LEN + 2 + kRangeDeviceSize * i, _networkDevices[i].getByteShortAddress(), 2);
-			//we get the device which correspond to the message which was sent (need to be filtered by MAC address)
-			_networkDevices[i].timeRangeSent = timeRangeSent;
-			_networkDevices[i].timePollSent.getTimestamp(data + SHORT_MAC_LEN + 4 + kRangeDeviceSize * i);
-			_networkDevices[i].timePollAckReceived.getTimestamp(data + SHORT_MAC_LEN + 9 + kRangeDeviceSize * i);
-			_networkDevices[i].timeRangeSent.getTimestamp(data+SHORT_MAC_LEN + 14 + kRangeDeviceSize * i);
-		}
-		copyShortAddress(_lastSentToShortAddress, shortBroadcast);
-		transmit(data, SHORT_MAC_LEN + 2 + kRangeDeviceSize *_networkDevicesNumber);
-	}
-	else{
-			// Timer-Delay setzen (nur für ein Gerät)
-			_timerDelay = DEFAULT_TIMER_DELAY + (uint16_t)(3 * DEFAULT_REPLY_DELAY_TIME / MICROS_TO_MILLIS);
-		
-			// MAC-Frame generieren
-			_globalMac.generateShortMACFrame(data, _currentShortAddress, myDistantDevice->getByteShortAddress());
-			data[SHORT_MAC_LEN] = static_cast<byte>(MessageType::RANGE);
-			data[SHORT_MAC_LEN+1] = 1; // Nur ein Gerät
-		
-			// Verzögerung für das Senden der Nachricht
-			DW1000Time deltaTime = DW1000Time(DEFAULT_REPLY_DELAY_TIME, DW1000Time::MICROSECONDS);
-			DW1000Time timeRangeSent = DW1000.setDelay(deltaTime);
-		
-			// Daten für das spezifische Gerät schreiben
-			memcpy(data + SHORT_MAC_LEN + 2, myDistantDevice->getByteShortAddress(), 2);
-			myDistantDevice->timeRangeSent = timeRangeSent;
-			myDistantDevice->timePollSent.getTimestamp(data + SHORT_MAC_LEN + 4);
-			myDistantDevice->timePollAckReceived.getTimestamp(data + SHORT_MAC_LEN + 9);
-			myDistantDevice->timeRangeSent.getTimestamp(data + SHORT_MAC_LEN + 14);
-		
-			copyShortAddress(_lastSentToShortAddress, myDistantDevice->getByteShortAddress());
-			transmit(data, SHORT_MAC_LEN + 2 + 17); // 17 Bytes für ein Gerät
-	}
-}
+void DW1000RangingClass::transmitRange() {
+    transmitInit();
 
-//Tag
-void DW1000RangingClass::transmitRange_2(bool timeslot) {
-	//transmit range need to accept broadcast for multiple anchor
-	DeviceIndices indices = calculateDeviceIndices(timeslot);
+    // Nur die Devices dieses Slots beachten!
+    uint8_t slotDeviceCount = _lastSlotDeviceCount;
 
-	transmitInit();
-	
-	//we need to set our timerDelay:
-	_timerDelay = DEFAULT_TIMER_DELAY+(uint16_t)(indices.deviceCount *3*DEFAULT_REPLY_DELAY_TIME/MICROS_TO_MILLIS);
-	
-	byte shortBroadcast[2] = {0xFF, 0xFF};
-	_globalMac.generateShortMACFrame(data, _currentShortAddress, shortBroadcast);
-	data[SHORT_MAC_LEN]   = RANGE;
-	//we enter the number of devices
-	data[SHORT_MAC_LEN+1] = indices.deviceCount;
-	
-	// delay sending the message and remember expected future sent timestamp
-	DW1000Time deltaTime     = DW1000Time(DEFAULT_REPLY_DELAY_TIME, DW1000Time::MICROSECONDS);
-	DW1000Time timeRangeSent = DW1000.setDelay(deltaTime);
+    // Timer anpassen auf aktuelle Slotgröße:
+    _timerDelay = DEFAULT_TIMER_DELAY + (uint16_t)(slotDeviceCount * 3 * DEFAULT_REPLY_DELAY_TIME / MICROS_TO_MILLIS);
 
-	uint8_t device_index = 0;
-	for(uint8_t i = indices.startIndex; i <= indices.endIndex; i++) {
-		//we write the short address of our device:
-		memcpy(data+SHORT_MAC_LEN+2+17*device_index, _networkDevices[i].getByteShortAddress(), 2);
-		//we get the device which correspond to the message which was sent (need to be filtered by MAC address)
-		_networkDevices[i].timeRangeSent = timeRangeSent;
-		_networkDevices[i].timePollSent.getTimestamp(data+SHORT_MAC_LEN+4+17*device_index);
-		_networkDevices[i].timePollAckReceived.getTimestamp(data+SHORT_MAC_LEN+9+17*device_index);
-		_networkDevices[i].timeRangeSent.getTimestamp(data+SHORT_MAC_LEN+14+17*device_index);
-		device_index++;
-	}
-	copyShortAddress(_lastSentToShortAddress, shortBroadcast);
-	transmit(data, SHORT_MAC_LEN+2+17*indices.deviceCount);
+    byte shortBroadcast[2] = {0xFF, 0xFF};
+    _globalMac.generateShortMACFrame(data, _currentShortAddress, shortBroadcast);
+    data[SHORT_MAC_LEN] = RANGE;
+    data[SHORT_MAC_LEN + 1] = slotDeviceCount;
+
+    // Sende-Delay setzen und merken
+    DW1000Time deltaTime = DW1000Time(DEFAULT_REPLY_DELAY_TIME, DW1000Time::MICROSECONDS);
+    DW1000Time timeRangeSent = DW1000.setDelay(deltaTime);
+
+    // Jetzt nur noch für die Slot-Devices verpacken!
+    for(uint8_t i = 0; i < slotDeviceCount; i++) {
+        DW1000Device* dev = _lastSlotDevices[i];
+        // Adress und Timestamps einfügen (Offsets wie im Originalcode)
+        memcpy(data + SHORT_MAC_LEN + 2 + kRangeDeviceSize * i, dev->getByteShortAddress(), 2);
+        dev->timeRangeSent = timeRangeSent;
+        dev->timePollSent.getTimestamp(data + SHORT_MAC_LEN + 4 + kRangeDeviceSize * i);
+        dev->timePollAckReceived.getTimestamp(data + SHORT_MAC_LEN + 9 + kRangeDeviceSize * i);
+        dev->timeRangeSent.getTimestamp(data + SHORT_MAC_LEN + 14 + kRangeDeviceSize * i);
+    }
+
+    copyShortAddress(_lastSentToShortAddress, shortBroadcast);
+    transmit(data, SHORT_MAC_LEN + 2 + kRangeDeviceSize * slotDeviceCount);
 }
 
 
@@ -1171,4 +1106,17 @@ float DW1000RangingClass::filterValue(float value, float previousValue, uint16_t
 	
 	float k = 2.0f / ((float)numberOfElements + 1.0f);
 	return (value * k) + previousValue * (1.0f - k);
+}
+
+/* ###########################################################################
+ * #### New  ###############################################################
+ * ######################################################################### */
+
+bool DW1000RangingClass::isFirstBlock(uint16_t shortAddr) {
+    // Slot 1: 0x81-0x84, Slot 2: 0x85-0x88
+    return shortAddr >= 0x81 && shortAddr <= 0x84;
+}
+
+bool DW1000RangingClass::isSecondBlock(uint16_t shortAddr) {
+    return shortAddr >= 0x85 && shortAddr <= 0x88;
 }
