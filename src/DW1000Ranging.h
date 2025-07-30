@@ -58,7 +58,6 @@ enum MessageType {
 //Default value
 
 #define DEFAULT_RESET_PERIOD 200 //in ms
-#define DEFAULT_REPLY_DELAY_TIME 7000 //in us
 
 enum sketchType {
   TAG = 0,
@@ -73,6 +72,13 @@ struct DeviceIndices {
 
 const uint8_t MAX_BLINK_COUNTER = 20;
 
+#define QUEUE_SIZE 64// julian
+struct ReceivedFrame {
+    DW1000Time timestamp;
+    uint16_t len;
+    uint8_t data[LEN_DATA];
+};
+
 //debug mode
 #ifndef DEBUG
 #define DEBUG false
@@ -81,6 +87,7 @@ const uint8_t MAX_BLINK_COUNTER = 20;
 
 class DW1000RangingClass {
 public:
+	static bool getNextReceivedMessage(ReceivedFrame &frame); //julian
 	//variables
 	static byte _channel;
 
@@ -88,7 +95,7 @@ public:
 	static byte data[LEN_DATA];
 	
 	//initialisation
-	static void    initCommunication(uint8_t myRST = DEFAULT_RST_PIN, uint8_t mySS = DEFAULT_SPI_SS_PIN, uint8_t myIRQ = 2, const uint32_t Default_Timer_Delay = 80);
+	static void    initCommunication(uint8_t myRST = DEFAULT_RST_PIN, uint8_t mySS = DEFAULT_SPI_SS_PIN, uint8_t myIRQ = 2, const uint32_t Default_Timer_Delay = 80, const uint32_t Default_Replay_Delay_Time=7000);
 	static void    configureNetwork(uint16_t deviceAddress, uint16_t networkId, const byte mode[], const byte channel=DW1000.CHANNEL_5);
 	static void    generalStart();
 	static void    startAsAnchor(char address[], const byte mode[], const bool randomShortAddress = true, const byte channel=DW1000.CHANNEL_5);
@@ -127,7 +134,11 @@ public:
 	static void visualizeDatas(byte datas[]);
 
 private:
-	static DW1000Device* _lastSlotDevices[4];    // Die 4 Devices des aktuellen Slots
+	static ReceivedFrame rxQueue[QUEUE_SIZE]; //julian
+    static volatile uint8_t rxHead;
+	static volatile uint8_t rxTail;
+
+	static DW1000Device* _lastSlotDevices[4];    // julian Die 4 Devices des aktuellen Slots
 	static uint8_t _lastSlotDeviceCount;         // wie viele Devices im Slot sind
 	static bool _slotPollAcksReceived[4];        // Für dieses Slot-Set: ACK erhalten?
 
@@ -180,6 +191,7 @@ private:
 	//timer Tick delay
 	static uint32_t     _timerDelay;
 	static uint32_t     DEFAULT_TIMER_DELAY;
+	static uint32_t 	DEFAULT_REPLY_DELAY_TIME; //in us
 
 	//ranging filter
 	static volatile boolean _useRangeFilter;

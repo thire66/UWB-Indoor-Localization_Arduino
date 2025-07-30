@@ -90,6 +90,7 @@ uint16_t  DW1000RangingClass::_replyDelayTimeUS;
 //timer delay
 uint32_t  DW1000RangingClass::_timerDelay;
 uint32_t  DW1000RangingClass::DEFAULT_TIMER_DELAY;
+uint32_t  DW1000RangingClass::DEFAULT_REPLY_DELAY_TIME; //in us
 
 //Here our handlers
 void (* DW1000RangingClass::_handleNewRange)(void) = 0;
@@ -105,25 +106,36 @@ bool DW1000RangingClass::lastTimeslotState;
 const uint8_t DW1000RangingClass::kRangeDeviceSize = 17;
 const uint8_t DW1000RangingClass::kPollDeviceSize = 4;
 
+//julian
+ReceivedFrame DW1000RangingClass::rxQueue[QUEUE_SIZE] = {};
+volatile uint8_t DW1000RangingClass::rxHead = 0;
+volatile uint8_t DW1000RangingClass::rxTail = 0;
+
+bool DW1000RangingClass::getNextReceivedMessage(ReceivedFrame &frame) {
+    if (rxTail == rxHead)
+        return false;
+    frame = rxQueue[rxTail];
+    rxTail = (rxTail + 1) % QUEUE_SIZE;
+    return true;
+}
+
 
 /* ###########################################################################
  * #### Init and end #######################################################
  * ######################################################################### */
 
-void DW1000RangingClass::initCommunication(uint8_t myRST, uint8_t mySS, uint8_t myIRQ, const uint32_t Default_Timer_Delay) {
+void DW1000RangingClass::initCommunication(uint8_t myRST, uint8_t mySS, uint8_t myIRQ, const uint32_t Default_Timer_Delay, const uint32_t Default_Replay_Delay_Time) {
 	// reset line to the chip
 	_RST              = myRST;
 	_SS               = mySS;
 	_resetPeriod      = DEFAULT_RESET_PERIOD;
+
 	// reply times (same on both sides for symm. ranging)
+	DEFAULT_REPLY_DELAY_TIME = Default_Replay_Delay_Time;
 	_replyDelayTimeUS = DEFAULT_REPLY_DELAY_TIME;
 
 	//we set our timer delay
 	DEFAULT_TIMER_DELAY = Default_Timer_Delay;
-	//default timer delay
-	// 80 defines Poll Delay - Duration 102ms
-	// 40 defines Poll Delay - Duration  62ms
-	// 25 defines Poll Delay - Duration  47ms
 	_timerDelay       = DEFAULT_TIMER_DELAY;
 	
 	DW1000.begin(myIRQ, myRST);
@@ -139,16 +151,19 @@ void DW1000RangingClass::configureNetwork(uint16_t deviceAddress, uint16_t netwo
 	DW1000.setNetworkId(networkId);
 	DW1000.setChannel(channel);
 	DW1000.enableMode(mode);
-	DW1000.useExtendedFrameLength(true);
+	DW1000.useExtendedFrameLength(true); 
 	DW1000.enableDebounceClock();
 	DW1000.setGPIOMode(LEDRXOK, LED_MODE); // RXOKLED-Modus für GPIO0
 	DW1000.setGPIOMode(LEDSFD,  LED_MODE); // SFDLED-Modus für GPIO1
 	DW1000.setGPIOMode(LEDRX,   LED_MODE); // RXLED-Modus für GPIO2
 	DW1000.setGPIOMode(LEDTX,   LED_MODE); // TXLED-Modus für GPIO3
 	DW1000.enableLedBlinking();
+	DW1000.useSmartPower(false); // Enable Smart Power for higher performance 
+	DW1000.setFrameFilter(false);
+	DW1000.setFrameFilterAllowData(false);
 	DW1000.commitConfiguration();
 }
-
+ 
 void DW1000RangingClass::generalStart() {
 	// attach callback for (successfully) sent and received messages
 	DW1000.attachSentHandler(handleSent);
@@ -188,6 +203,8 @@ void DW1000RangingClass::generalStart() {
 
 //Anchor
 void DW1000RangingClass::startAsAnchor(char address[], const byte mode[], const bool randomShortAddress, const byte channel) {
+	//defined type as anchor
+	_type = ANCHOR;
 	//save the address
 	DW1000.convertToByte(address, _currentAddress);
 	//write the address on the DW1000 chip
@@ -213,17 +230,14 @@ void DW1000RangingClass::startAsAnchor(char address[], const byte mode[], const 
 	DW1000Ranging.configureNetwork(currShortAddr, 0xDECA, mode, channel);
 	//general start:
 	generalStart();
-	
-	//defined type as anchor
-	_type = ANCHOR;
 
 	Serial.print("\nANCHOR short address: ");
 	Serial.print(currShortAddr, HEX);
-	
 }
 
 //Tag
 void DW1000RangingClass::startAsTag(char address[], const byte mode[], const bool randomShortAddress, const byte channel) {
+	_type = TAG;
 	//save the address
 	DW1000.convertToByte(address, _currentAddress);
 	//write the address on the DW1000 chip
@@ -244,14 +258,18 @@ void DW1000RangingClass::startAsTag(char address[], const byte mode[], const boo
 	
 	//we configur the network for mac filtering
 	//(device Address, network ID, frequency)
+
 	DW1000Ranging.configureNetwork(_currentShortAddress[0]*256+_currentShortAddress[1], 0xDECA, mode, channel);
 	
 	generalStart();
 	//defined type as tag
-	_type = TAG;
+	
 	lastSyncTime = (esp_timer_get_time()/MICROS_TO_MILLIS);
 
 	Serial.print("\n### TAG ###");
+	char buf[128];
+	DW1000.getPrintableDeviceMode(buf);
+	Serial.print(String("\n") + buf);
 }
 
 // Tag & Anchor
@@ -544,32 +562,30 @@ void DW1000RangingClass::updateDeviceTimeStamps(byte* shortAddress, DW1000Time t
 	}
 }
 
-// Tag & Anchor
+// Tag & Anchor 
+//julian
 void DW1000RangingClass::handleReceivedMessage() {
-	if (!_receivedAck) {
-		return;
-	}
-	_receivedAck = false;
-	DW1000.getData(data, LEN_DATA);
-
-	MessageType messageType = detectMessageType(data);
-
-	switch (messageType) {
-		case BLINK:
-			if (_type == ANCHOR) {
-				handleBlink();
-			}
-			break;
-		case RANGING_INIT:
-			if (_type == TAG) {
-				handleRangingInit();
-			}
-			break;
-		default:
-			processShortMacMessage(messageType);
-			break;
+    ReceivedFrame frame;
+    while(getNextReceivedMessage(frame)) {
+		memset(data, 0, LEN_DATA);                  
+		memcpy(data, frame.data, frame.len);      
+		MessageType messageType = detectMessageType(frame.data);
+		switch (messageType) {
+			case BLINK:
+				if (_type == ANCHOR)
+					handleBlink();
+				break;
+			case RANGING_INIT:
+				if (_type == TAG)
+					handleRangingInit();
+				break;
+			default:
+				processShortMacMessage(messageType);
+				break;
+		}
 	}
 }
+
 
 // Anchor
 void DW1000RangingClass::handleBlink() {
@@ -845,14 +861,37 @@ void DW1000RangingClass::handleSent() {
 	_sentAck = true;
 }
 
+//julian 
 void DW1000RangingClass::handleReceived() {
-	//if received frame is corrupt, ignore it
-	if(DW1000.isReceiveFailed()){
-		return;
-	}
-	// status change on received success
+    if (DW1000.isReceiveFailed())
+        return;
+
+    uint16_t len = DW1000.getDataLength();
+    if (len < 10 || len > LEN_DATA)
+        return;
+
+    uint8_t tmpData[LEN_DATA];
+    DW1000.getData(tmpData, len);
+
+    DW1000Time timestamp;
+    DW1000.getReceiveTimestamp(timestamp);
+
+    uint8_t nextHead = (rxHead + 1) % QUEUE_SIZE;
+	if (nextHead == rxTail) {
+        // Buffer voll, Frame verwerfen
+        return;
+    }
+    ReceivedFrame& slot = rxQueue[rxHead];
+    slot.timestamp = timestamp;
+    slot.len = len;
+    memcpy(slot.data, tmpData, len);
+
+    rxHead = nextHead;
 	_receivedAck = true;
 }
+
+
+
 
 
 void DW1000RangingClass::noteActivity() {
@@ -1034,7 +1073,8 @@ void DW1000RangingClass::transmitRangeReport(DW1000Device* myDistantDevice) {
 	memcpy(data+1+SHORT_MAC_LEN, &curRange, 4);
 	memcpy(data+5+SHORT_MAC_LEN, &curRXPower, 4);
 	copyShortAddress(_lastSentToShortAddress, myDistantDevice->getByteShortAddress());
-	transmit(data, SHORT_MAC_LEN+9, DW1000Time(_replyDelayTimeUS, DW1000Time::MICROSECONDS)); //transmit(data, DW1000Time(_replyDelayTimeUS, DW1000Time::MICROSECONDS));
+	transmit(data, SHORT_MAC_LEN+9, DW1000Time(_replyDelayTimeUS, DW1000Time::MICROSECONDS)); 
+	//transmit(data, DW1000Time(_replyDelayTimeUS, DW1000Time::MICROSECONDS));
 }
 
 void DW1000RangingClass::transmitRangeFailed(DW1000Device* myDistantDevice) {

@@ -138,7 +138,8 @@ void DW1000Class::select(uint8_t ss) {
 	writeNetworkIdAndDeviceAddress();
 	// default system configuration
 	memset(_syscfg, 0, LEN_SYS_CFG);
-	setDoubleBuffering(false);
+	setDoubleBuffering(false);  //new value julian
+	setReceiverAutoReenable(true);
 	setInterruptPolarity(true);
 	writeSystemConfigurationRegister();
 	// default interrupt mask, i.e. no interrupts
@@ -721,58 +722,88 @@ void DW1000Class::tune() {
  * #### Interrupt handling ###################################################
  * ######################################################################### */
 
-void DW1000Class::handleInterrupt() {
+void IRAM_ATTR DW1000Class::handleInterrupt() {
 	interruptOccurred = true;
 }
 
+//julian
 void DW1000Class::processInterrupt(void *pvParameter) {
-	for(;;){ 
-		if (interruptOccurred) {
-			interruptOccurred = false;
-			
-			// read current status and handle via callbacks
-			readSystemEventStatusRegister();
-			if(isClockProblem() /* TODO and others */ && _handleError != 0) {
-				(*_handleError)();
-			}
-			if(isTransmitDone() && _handleSent != 0) {
-				(*_handleSent)();
-				clearTransmitStatus();
-			}
-			if(isReceiveTimestampAvailable() && _handleReceiveTimestampAvailable != 0) {
-				(*_handleReceiveTimestampAvailable)();
-				clearReceiveTimestampAvailableStatus();
-			}
-			if(isReceiveFailed() && _handleReceiveFailed != 0) {
-				(*_handleReceiveFailed)();
-				clearReceiveStatus();
-				if(_permanentReceive) {
-					newReceive();
-					startReceive();
-				}
-			} else if(isReceiveTimeout() && _handleReceiveTimeout != 0) {
-				(*_handleReceiveTimeout)();
-				clearReceiveStatus();
-				if(_permanentReceive) {
-					newReceive();
-					startReceive();
-				}
-			} else if(isReceiveDone() && _handleReceived != 0) {
-				(*_handleReceived)();
-				clearReceiveStatus();
-				if(_permanentReceive) {
-					newReceive();
-					startReceive();
-				}
-			}
-			// clear all status that is left unhandled
-			clearAllStatus();
-		}
-		vTaskDelay(pdMS_TO_TICKS(1));
-	}  
-  	vTaskDelete(NULL);
+    for(;;){
+        if (interruptOccurred) {
+            interruptOccurred = false;
+            
+            readSystemEventStatusRegister();
+            
+            // Error-Events behandeln
+            if(isClockProblem() && _handleError != 0) {
+                (*_handleError)();
+            }
+            
+            // TX-Behandlung
+            if(isTransmitDone() && _handleSent != 0) {
+                (*_handleSent)();
+                clearTransmitStatus();
+            }
+            
+            // RX-Success behandeln
+            if(isReceiveDone()) {
+                // *** Handler IMMER aufrufen bei empfangenem Frame ***
+                if(_handleReceived != 0) {
+                    (*_handleReceived)();
+                }
+                
+                // *** Double-Buffer: Host-Pointer umschalten ***
+                /*setBit(_sysctrl, LEN_SYS_CTRL, HRBPT_BIT, true);
+                writeBytes(SYS_CTRL, NO_SUB, _sysctrl, LEN_SYS_CTRL);
+                setBit(_sysctrl, LEN_SYS_CTRL, HRBPT_BIT, false);*/
+                
+                clearReceiveStatus();
+                
+                // *** MANUELL RX neu starten ***
+                if(_permanentReceive) {
+                    newReceive();
+                    startReceive();
+                }
+            }
+            
+            // RX-Error-Behandlung
+            else if(isReceiveFailed() && _handleReceiveFailed != 0) {
+                (*_handleReceiveFailed)();
+                clearReceiveStatus();
+                
+                // *** RX nach Fehler neu starten ***
+                if(_permanentReceive) {
+                    newReceive();
+                    startReceive();
+                }
+            }
+            
+            // RX-Timeout-Behandlung  
+            else if(isReceiveTimeout() && _handleReceiveTimeout != 0) {
+                (*_handleReceiveTimeout)();
+                clearReceiveStatus();
+                
+                // *** RX nach Timeout neu starten ***
+                if(_permanentReceive) {
+                    newReceive();
+                    startReceive();
+                }
+            }
+            
+            // Timestamp-Events behandeln
+            if(isReceiveTimestampAvailable() && _handleReceiveTimestampAvailable != 0) {
+                (*_handleReceiveTimestampAvailable)();
+                clearReceiveTimestampAvailableStatus();
+            }
+            
+            // Alle verbleibenden Status-Bits löschen
+            clearAllStatus();
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    vTaskDelete(NULL);
 }
-
 
 /* ###########################################################################
  * #### Pretty printed device information ####################################
@@ -1291,10 +1322,13 @@ void DW1000Class::setDefaults(byte channel) {
 		suppressFrameCheck(false);
 		//for global frame filtering
 		setFrameFilter(false);
+
 		/* old defaults with active frame filter - better set filter in every script where you really need it
 		setFrameFilter(true);
+
 		//for data frame (poll, poll_ack, range, range report, range failed) filtering
 		setFrameFilterAllowData(true);
+		
 		//for reserved (blink) frame filtering
 		setFrameFilterAllowReserved(true);
 		//setFrameFilterAllowMAC(true);
@@ -1314,11 +1348,11 @@ void DW1000Class::setDefaults(byte channel) {
 		// TODO add channel and code to mode tuples
 	    // TODO add channel and code settings with checks (see DW1000 user manual 10.5 table 61)/
 	    setChannel(channel);
-		if(getPulseFrequency() == TX_PULSE_FREQ_16MHZ) {
+		/*if(getPulseFrequency() == TX_PULSE_FREQ_16MHZ) {
 			setPreambleCode(PREAMBLE_CODE_16MHZ_4);
 		} else {
 			setPreambleCode(PREAMBLE_CODE_64MHZ_10);
-		}
+		}*/
 	}
 }
 

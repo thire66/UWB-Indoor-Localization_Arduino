@@ -299,4 +299,8 @@
 #define LEDRX     2   // GPIO2: RXLED   (Empfänger aktiv)
 #define LEDTX     3   // GPIO3: TXLED   (Sender aktiv)
 
+#define HSRBP_BIT 29
+#define ICRBP_BIT 30
+#define HRBPT_BIT 24
+
 #endif
