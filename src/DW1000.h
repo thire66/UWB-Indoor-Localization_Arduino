@@ -35,6 +35,7 @@
 #include <SPI.h>
 #include "DW1000Constants.h"
 #include "DW1000Time.h"
+#include "DW1000Ranging.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -45,8 +46,11 @@ class DW1000Class {
 public:
 	//interupt
 	static TaskHandle_t xHandleUwbInterrupt;
-	static volatile bool interruptOccurred;
+	static SemaphoreHandle_t interruptSemaphore;
 	static void processInterrupt(void *pvParameter);
+	static void printActiveBuffer();
+	static void alignDoubleBufferPointers();
+	static void toggleRxBufferPointer();
 	
 	
 	/* ##### Init ################################################################ */
@@ -521,7 +525,9 @@ public:
 	static void clearTransmitStatus();
 	
 	/* internal helper to read/write system registers. */
-	static void readSystemEventStatusRegister();
+	static void readSystemEventStatusRegister(); //julian
+	static boolean isReceiveOverflow();
+
 	static void readSystemConfigurationRegister();
 	static void writeSystemConfigurationRegister();
 	static void readNetworkIdAndDeviceAddress();

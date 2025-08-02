@@ -25,7 +25,7 @@
 DW1000Class DW1000;
 
 TaskHandle_t DW1000Class::xHandleUwbInterrupt;
-volatile bool DW1000Class::interruptOccurred = false;
+SemaphoreHandle_t DW1000Class::interruptSemaphore = NULL;
 
 /* ###########################################################################
  * #### Static member variables ##############################################
@@ -138,8 +138,7 @@ void DW1000Class::select(uint8_t ss) {
 	writeNetworkIdAndDeviceAddress();
 	// default system configuration
 	memset(_syscfg, 0, LEN_SYS_CFG);
-	setDoubleBuffering(false);  //new value julian
-	setReceiverAutoReenable(true);
+
 	setInterruptPolarity(true);
 	writeSystemConfigurationRegister();
 	// default interrupt mask, i.e. no interrupts
@@ -184,6 +183,7 @@ void DW1000Class::begin(uint8_t irq, uint8_t rst) {
     _deviceMode = IDLE_MODE;
 
     // Attach interrupt for ESP32
+	interruptSemaphore = xSemaphoreCreateCounting(100, 0);
     attachInterrupt(digitalPinToInterrupt(_irq), DW1000Class::handleInterrupt, RISING);
 	vTaskDelay(pdMS_TO_TICKS(5));
 	if (xHandleUwbInterrupt != NULL) {
@@ -722,88 +722,194 @@ void DW1000Class::tune() {
  * #### Interrupt handling ###################################################
  * ######################################################################### */
 
-void IRAM_ATTR DW1000Class::handleInterrupt() {
-	interruptOccurred = true;
+void IRAM_ATTR DW1000Class::handleInterrupt()
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    /* nur noch ein einziger Aufruf, Scheduler entscheidet selbst */
+    xSemaphoreGiveFromISR(interruptSemaphore, &xHigherPriorityTaskWoken);
+
+    /* sofortiger Context-Switch, wenn nötig */
+    if (xHigherPriorityTaskWoken == pdTRUE)
+        portYIELD_FROM_ISR();          // Macro ohne Parameter benutzen
 }
+
 
 //julian
 void DW1000Class::processInterrupt(void *pvParameter) {
     for(;;){
-        if (interruptOccurred) {
-            interruptOccurred = false;
-            
+			xSemaphoreTake(interruptSemaphore, portMAX_DELAY);
+			
             readSystemEventStatusRegister();
-            
-            // Error-Events behandeln
+
             if(isClockProblem() && _handleError != 0) {
                 (*_handleError)();
+				continue;
             }
-            
-            // TX-Behandlung
-            if(isTransmitDone() && _handleSent != 0) {
+
+            else if(isTransmitDone() && _handleSent != 0) {
                 (*_handleSent)();
                 clearTransmitStatus();
+				continue;
             }
-            
-            // RX-Success behandeln
+
             if(isReceiveDone()) {
-                // *** Handler IMMER aufrufen bei empfangenem Frame ***
-                if(_handleReceived != 0) {
+				uint16_t len = getDataLength();
+				if(len > 0 && len <= LEN_DATA) {
+					uint8_t nextHead = (DW1000RangingClass::rxHead + 1) % QUEUE_SIZE;
+					if (nextHead != DW1000RangingClass::rxTail) {
+						DW1000.getData(DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].data, len);
+						DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].len = len;
+						DW1000.getReceiveTimestamp(DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].timestamp);
+						DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].rxPower = DW1000.getReceivePower();
+						DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].fpPower = DW1000.getFirstPathPower();
+						DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].quality = DW1000.getReceiveQuality();
+						uint8_t writtenIdx = DW1000RangingClass::rxHead;
+						DW1000RangingClass::rxHead = nextHead;
+
+						uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
+						uint8_t prevTail = DW1000RangingClass::rxTail;
+						// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
+						uint32_t sys_status = 0;
+						readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
+						uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
+						uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
+						Serial.printf("[Event] RX_Done - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
+									hsrbp, icrbp, prevHead, prevTail);
+					}
+				}
+				
+				if(_handleReceived != 0) {
                     (*_handleReceived)();
                 }
-                
-                // *** Double-Buffer: Host-Pointer umschalten ***
-                /*setBit(_sysctrl, LEN_SYS_CTRL, HRBPT_BIT, true);
-                writeBytes(SYS_CTRL, NO_SUB, _sysctrl, LEN_SYS_CTRL);
-                setBit(_sysctrl, LEN_SYS_CTRL, HRBPT_BIT, false);*/
-                
+				//printActiveBuffer();
+                toggleRxBufferPointer();
+
                 clearReceiveStatus();
-                
-                // *** MANUELL RX neu starten ***
+
                 if(_permanentReceive) {
                     newReceive();
                     startReceive();
                 }
-            }
-            
-            // RX-Error-Behandlung
-            else if(isReceiveFailed() && _handleReceiveFailed != 0) {
-                (*_handleReceiveFailed)();
-                clearReceiveStatus();
+				continue;
+            } else if(isReceiveFailed()) {
                 
-                // *** RX nach Fehler neu starten ***
+                toggleRxBufferPointer();
+				clearReceiveStatus();
+
+				uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
+				uint8_t prevTail = DW1000RangingClass::rxTail;
+				// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
+				uint32_t sys_status = 0;
+				readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
+				uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
+				uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
+				Serial.printf("[Event] RX_FAILED - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
+							hsrbp, icrbp, prevHead, prevTail);
+
                 if(_permanentReceive) {
                     newReceive();
                     startReceive();
                 }
-            }
-            
-            // RX-Timeout-Behandlung  
-            else if(isReceiveTimeout() && _handleReceiveTimeout != 0) {
-                (*_handleReceiveTimeout)();
-                clearReceiveStatus();
-                
-                // *** RX nach Timeout neu starten ***
+				continue;
+            } else if(isReceiveTimeout()) {
+                toggleRxBufferPointer();
+				clearReceiveStatus();
+
+				uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
+				uint8_t prevTail = DW1000RangingClass::rxTail;
+				// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
+				uint32_t sys_status = 0;
+				readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
+				uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
+				uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
+				Serial.printf("[Event] RX_TIMEOUT - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
+							hsrbp, icrbp, prevHead, prevTail);
+
                 if(_permanentReceive) {
                     newReceive();
                     startReceive();
                 }
+				continue;
             }
-            
-            // Timestamp-Events behandeln
-            if(isReceiveTimestampAvailable() && _handleReceiveTimestampAvailable != 0) {
-                (*_handleReceiveTimestampAvailable)();
+
+            else if(isReceiveTimestampAvailable()) {
                 clearReceiveTimestampAvailableStatus();
+				continue;
             }
-            
-            // Alle verbleibenden Status-Bits löschen
+
+			else if (isReceiveOverflow()) { 
+				// Log: Serial.println("RX_OVERFLOW");
+				toggleRxBufferPointer();
+				clearReceiveStatus();
+
+				uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
+				uint8_t prevTail = DW1000RangingClass::rxTail;
+				// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
+				uint32_t sys_status = 0;
+				readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
+				uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
+				uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
+				Serial.printf("[Event] RX_Overflow - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
+							hsrbp, icrbp, prevHead, prevTail);
+				if (_permanentReceive) {
+					newReceive();
+					startReceive();
+				}
+				continue;
+			}
+
             clearAllStatus();
-        }
-        
-        vTaskDelay(pdMS_TO_TICKS(1));
     }
     vTaskDelete(NULL);
 }
+
+// Gibt 0 oder 1 zurück: aktiver Buffer
+void DW1000Class::printActiveBuffer() {
+    uint32_t sys_status = 0;
+	readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
+    Serial.print("\n");
+	Serial.print("HSRBP_BIT: "); Serial.println((sys_status >> HSRBP_BIT) & 0x1); //Host Side Receive Buffer Pointer (0: Buffer 0, 1: Buffer 1). Welchen Buffer sieht der Host?
+	Serial.print("ICRBP_BIT: "); Serial.println((sys_status >> ICRBP_BIT) & 0x1); //IC Side Receive Buffer Pointer (0: Buffer 0, 1: Buffer 1). WO wird das nächste Frame landen?
+}
+
+void DW1000Class::alignDoubleBufferPointers() {
+    uint32_t sys_status = 0;
+    readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
+    uint8_t hsrbp = (sys_status & (1UL << HSRBP_BIT)) ? 1 : 0;
+	uint8_t icrbp = (sys_status & (1UL << ICRBP_BIT)) ? 1 : 0;
+    int bailout = 10; // Maximal 10 Versuche!
+    while (hsrbp != icrbp && bailout--) {
+        // Toggle HRBPT
+        toggleRxBufferPointer();
+
+        // Nochmals Register lesen
+        readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
+        //sys_status = __builtin_bswap32(sys_status);
+        hsrbp = (sys_status & (1UL << HSRBP_BIT)) ? 1 : 0;
+		icrbp = (sys_status & (1UL << ICRBP_BIT)) ? 1 : 0;
+    }
+	// Debug-Ausgabe nach Alignment:
+    Serial.print("[ALIGN] Result HSRBP: "); Serial.print(hsrbp);
+    Serial.print(" | ICRBP: "); Serial.println(icrbp);
+    if(hsrbp != icrbp) {
+        Serial.println("WARNING: Could not align DoubleBuffer Pointers!");
+    }
+}
+
+void DW1000Class::toggleRxBufferPointer() {
+    // Setze HRBPT Bit (Bit 2) im lokalen SYS_CTRL Shadow
+    setBit(_sysctrl, LEN_SYS_CTRL, HRBPT_BIT, true);
+    // Schreibe das SYS_CTRL-Register, so dass das Toggle ausgelöst wird
+    writeBytes(SYS_CTRL, NO_SUB, _sysctrl, LEN_SYS_CTRL);
+    // HRBPT Bit sofort wieder zurücksetzen (damit es nur ein Toggle ist)
+    setBit(_sysctrl, LEN_SYS_CTRL, HRBPT_BIT, false);
+}
+
+boolean DW1000Class::isReceiveOverflow() {
+    return getBit(_sysstatus, LEN_SYS_STATUS, RXOVRR_BIT); // Bit siehe Handbuch!
+}
+
 
 /* ###########################################################################
  * #### Pretty printed device information ####################################
@@ -813,21 +919,21 @@ void DW1000Class::processInterrupt(void *pvParameter) {
 
 void DW1000Class::getPrintableDeviceIdentifier(char msgBuffer[]) {
 	byte data[LEN_DEV_ID];
-	readBytes(DEV_ID, NO_SUB, data, LEN_DEV_ID);
+	readBytes(DEV_ID, 0x00, data, LEN_DEV_ID);
 	sprintf(msgBuffer, "%02X - model: %d, version: %d, revision: %d",
 					(uint16_t)((data[3] << 8) | data[2]), data[1], (data[0] >> 4) & 0x0F, data[0] & 0x0F);
 }
 
 void DW1000Class::getPrintableExtendedUniqueIdentifier(char msgBuffer[]) {
 	byte data[LEN_EUI];
-	readBytes(EUI, NO_SUB, data, LEN_EUI);
+	readBytes(EUI, 0x00, data, LEN_EUI);
 	sprintf(msgBuffer, "%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
 					data[7], data[6], data[5], data[4], data[3], data[2], data[1], data[0]);
 }
 
 void DW1000Class::getPrintableNetworkIdAndShortAddress(char msgBuffer[]) {
 	byte data[LEN_PANADR];
-	readBytes(PANADR, NO_SUB, data, LEN_PANADR);
+	readBytes(PANADR, 0x00, data, LEN_PANADR);
 	sprintf(msgBuffer, "PAN: %02X, Short Address: %02X",
 					(uint16_t)((data[3] << 8) | data[2]), (uint16_t)((data[1] << 8) | data[0]));
 }
@@ -885,7 +991,7 @@ void DW1000Class::getPrintableDeviceMode(char msgBuffer[]) {
  * ######################################################################### */
 
 void DW1000Class::readSystemConfigurationRegister() {
-	readBytes(SYS_CFG, NO_SUB, _syscfg, LEN_SYS_CFG);
+	readBytes(SYS_CFG, 0x00, _syscfg, LEN_SYS_CFG);
 }
 
 void DW1000Class::writeSystemConfigurationRegister() {
@@ -893,11 +999,11 @@ void DW1000Class::writeSystemConfigurationRegister() {
 }
 
 void DW1000Class::readSystemEventStatusRegister() {
-	readBytes(SYS_STATUS, NO_SUB, _sysstatus, LEN_SYS_STATUS);
+	readBytes(SYS_STATUS, 0x00, _sysstatus, LEN_SYS_STATUS);
 }
 
 void DW1000Class::readNetworkIdAndDeviceAddress() {
-	readBytes(PANADR, NO_SUB, _networkAndAddress, LEN_PANADR);
+	readBytes(PANADR, 0x00, _networkAndAddress, LEN_PANADR);
 }
 
 void DW1000Class::writeNetworkIdAndDeviceAddress() {
@@ -905,7 +1011,7 @@ void DW1000Class::writeNetworkIdAndDeviceAddress() {
 }
 
 void DW1000Class::readSystemEventMaskRegister() {
-	readBytes(SYS_MASK, NO_SUB, _sysmask, LEN_SYS_MASK);
+	readBytes(SYS_MASK, 0x00, _sysmask, LEN_SYS_MASK);
 }
 
 void DW1000Class::writeSystemEventMaskRegister() {
@@ -913,7 +1019,7 @@ void DW1000Class::writeSystemEventMaskRegister() {
 }
 
 void DW1000Class::readChannelControlRegister() {
-	readBytes(CHAN_CTRL, NO_SUB, _chanctrl, LEN_CHAN_CTRL);
+	readBytes(CHAN_CTRL, 0x00, _chanctrl, LEN_CHAN_CTRL);
 }
 
 void DW1000Class::writeChannelControlRegister() {
@@ -921,7 +1027,7 @@ void DW1000Class::writeChannelControlRegister() {
 }
 
 void DW1000Class::readTransmitFrameControlRegister() {
-	readBytes(TX_FCTRL, NO_SUB, _txfctrl, LEN_TX_FCTRL);
+	readBytes(TX_FCTRL, 0x00, _txfctrl, LEN_TX_FCTRL);
 }
 
 void DW1000Class::writeTransmitFrameControlRegister() {
@@ -1025,7 +1131,10 @@ void DW1000Class::setFrameFilterAllowReserved(boolean val) {
 	setBit(_syscfg, LEN_SYS_CFG, FFAR_BIT, val);
 }
 
-
+/*
+Double-buffered receiving is enabled by 
+setting the DIS_DRXB bit to zero, (in Register file: 
+0x04 – System Configuration).*/
 void DW1000Class::setDoubleBuffering(boolean val) {
 	setBit(_syscfg, LEN_SYS_CFG, DIS_DRXB_BIT, !val);
 }
@@ -1323,6 +1432,8 @@ void DW1000Class::setDefaults(byte channel) {
 		//for global frame filtering
 		setFrameFilter(false);
 
+		setDoubleBuffering(true);  //new value julian
+
 		/* old defaults with active frame filter - better set filter in every script where you really need it
 		setFrameFilter(true);
 
@@ -1390,7 +1501,7 @@ uint16_t DW1000Class::getDataLength() {
 	} else if(_deviceMode == RX_MODE) {
 		// 10 bits of RX frame control register
 		byte rxFrameInfo[LEN_RX_FINFO];
-		readBytes(RX_FINFO, NO_SUB, rxFrameInfo, LEN_RX_FINFO);
+		readBytes(RX_FINFO, 0x00, rxFrameInfo, LEN_RX_FINFO);
 		len = ((((uint16_t)rxFrameInfo[1] << 8) | (uint16_t)rxFrameInfo[0]) & 0x03FF);
 	}
 	if(_frameCheck && len > 2) {
@@ -1403,7 +1514,7 @@ void DW1000Class::getData(byte data[], uint16_t n) {
 	if(n <= 0) {
 		return;
 	}
-	readBytes(RX_BUFFER, NO_SUB, data, n);
+	readBytes(RX_BUFFER, 0x00, data, n); //NO_SUB
 }
 
 void DW1000Class::getData(String& data) {
@@ -1494,7 +1605,7 @@ void DW1000Class::correctTimestamp(DW1000Time& timestamp) {
 
 void DW1000Class::getSystemTimestamp(DW1000Time& time) {
 	byte sysTimeBytes[LEN_SYS_TIME];
-	readBytes(SYS_TIME, NO_SUB, sysTimeBytes, LEN_SYS_TIME);
+	readBytes(SYS_TIME, 0x00, sysTimeBytes, LEN_SYS_TIME);
 	time.setTimestamp(sysTimeBytes);
 }
 
@@ -1507,7 +1618,7 @@ void DW1000Class::getReceiveTimestamp(byte data[]) {
 }
 
 void DW1000Class::getSystemTimestamp(byte data[]) {
-	readBytes(SYS_TIME, NO_SUB, data, LEN_SYS_TIME);
+	readBytes(SYS_TIME, 0x00, data, LEN_SYS_TIME);
 }
 
 boolean DW1000Class::isTransmitDone() {
@@ -1605,7 +1716,7 @@ float DW1000Class::getFirstPathPower() {
 	readBytes(RX_TIME, FP_AMPL1_SUB, fpAmpl1Bytes, LEN_FP_AMPL1);
 	readBytes(RX_FQUAL, FP_AMPL2_SUB, fpAmpl2Bytes, LEN_FP_AMPL2);
 	readBytes(RX_FQUAL, FP_AMPL3_SUB, fpAmpl3Bytes, LEN_FP_AMPL3);
-	readBytes(RX_FINFO, NO_SUB, rxFrameInfo, LEN_RX_FINFO);
+	readBytes(RX_FINFO, 0x00, rxFrameInfo, LEN_RX_FINFO);
 	f1 = (uint16_t)fpAmpl1Bytes[0] | ((uint16_t)fpAmpl1Bytes[1] << 8);
 	f2 = (uint16_t)fpAmpl2Bytes[0] | ((uint16_t)fpAmpl2Bytes[1] << 8);
 	f3 = (uint16_t)fpAmpl3Bytes[0] | ((uint16_t)fpAmpl3Bytes[1] << 8);
@@ -1634,7 +1745,7 @@ float DW1000Class::getReceivePower() {
 	uint16_t C, N;
 	float    A, corrFac;
 	readBytes(RX_FQUAL, CIR_PWR_SUB, cirPwrBytes, LEN_CIR_PWR);
-	readBytes(RX_FINFO, NO_SUB, rxFrameInfo, LEN_RX_FINFO);
+	readBytes(RX_FINFO, 0x00, rxFrameInfo, LEN_RX_FINFO);
 	C = (uint16_t)cirPwrBytes[0] | ((uint16_t)cirPwrBytes[1] << 8);
 	N = (((uint16_t)rxFrameInfo[2] >> 4) & 0xFF) | ((uint16_t)rxFrameInfo[3] << 4);
 	if(_pulseFrequency == TX_PULSE_FREQ_16MHZ) {

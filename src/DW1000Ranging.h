@@ -77,6 +77,9 @@ struct ReceivedFrame {
     DW1000Time timestamp;
     uint16_t len;
     uint8_t data[LEN_DATA];
+	float rxPower;
+    float fpPower;
+    float quality;
 };
 
 //debug mode
@@ -88,6 +91,9 @@ struct ReceivedFrame {
 class DW1000RangingClass {
 public:
 	static bool getNextReceivedMessage(ReceivedFrame &frame); //julian
+	static ReceivedFrame rxQueue[QUEUE_SIZE]; 
+    static volatile uint8_t rxHead;
+	static volatile uint8_t rxTail;
 	//variables
 	static byte _channel;
 
@@ -96,10 +102,10 @@ public:
 	
 	//initialisation
 	static void    initCommunication(uint8_t myRST = DEFAULT_RST_PIN, uint8_t mySS = DEFAULT_SPI_SS_PIN, uint8_t myIRQ = 2, const uint32_t Default_Timer_Delay = 80, const uint32_t Default_Replay_Delay_Time=7000);
-	static void    configureNetwork(uint16_t deviceAddress, uint16_t networkId, const byte mode[], const byte channel=DW1000.CHANNEL_5);
+	static void    configureNetwork(uint16_t deviceAddress, uint16_t networkId, const byte mode[], const byte channel);
 	static void    generalStart();
-	static void    startAsAnchor(char address[], const byte mode[], const bool randomShortAddress = true, const byte channel=DW1000.CHANNEL_5);
-	static void    startAsTag(char address[], const byte mode[], const bool randomShortAddress = true, const byte channel=DW1000.CHANNEL_5);
+	static void    startAsAnchor(char address[], const byte mode[], const bool randomShortAddress, const byte channel);
+	static void    startAsTag(char address[], const byte mode[], const bool randomShortAddress, const byte channel);
 	static boolean addNetworkDevices(DW1000Device* device, boolean shortAddress);
 	static boolean addNetworkDevices(DW1000Device* device);
 	static void    removeNetworkDevices(int16_t index);
@@ -134,10 +140,6 @@ public:
 	static void visualizeDatas(byte datas[]);
 
 private:
-	static ReceivedFrame rxQueue[QUEUE_SIZE]; //julian
-    static volatile uint8_t rxHead;
-	static volatile uint8_t rxTail;
-
 	static DW1000Device* _lastSlotDevices[4];    // julian Die 4 Devices des aktuellen Slots
 	static uint8_t _lastSlotDeviceCount;         // wie viele Devices im Slot sind
 	static bool _slotPollAcksReceived[4];        // Für dieses Slot-Set: ACK erhalten?
@@ -245,13 +247,13 @@ private:
 	static void handleReceivedMessage();
 	static void handleBlink();
 	static void handleRangingInit();
-	static void processShortMacMessage(MessageType messageType);
-	static void processAnchorMessage(MessageType messageType, DW1000Device* myDistantDevice);
-	static void handlePoll(DW1000Device* myDistantDevice);
-	static void handleRange(DW1000Device* myDistantDevice);
-	static void processTagMessage(MessageType messageType, DW1000Device* myDistantDevice);
+	static void processShortMacMessage(MessageType messageType, const ReceivedFrame& frame );
+	static void processAnchorMessage(MessageType messageType, DW1000Device* myDistantDevice, const ReceivedFrame& frame );
+	static void handlePoll(DW1000Device* myDistantDevice, const DW1000Time& rxTimestamp);
+	static void handleRange(DW1000Device* myDistantDevice, const ReceivedFrame& frame);
+	static void processTagMessage(MessageType messageType, DW1000Device* myDistantDevice, const DW1000Time& rxTimestamp);
 	static void handleRangeReport(DW1000Device* device);
-	static void handlePollAck(DW1000Device* device);
+	static void handlePollAck(DW1000Device* device, const DW1000Time& rxTimestamp);
 
 	static bool isFirstBlock(uint16_t shortAddr);
 	static bool isSecondBlock(uint16_t shortAddr);

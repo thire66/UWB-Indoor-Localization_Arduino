@@ -75,6 +75,7 @@
 #define WAIT4RESP_BIT 7
 #define RXENAB_BIT 8
 #define RXDLYS_BIT 9
+#define HRBPT_BIT 24
 
 // system event status register
 #define SYS_STATUS 0x0F
@@ -92,11 +93,14 @@
 #define RXFCE_BIT 15
 #define RXRFSL_BIT 16
 #define RXRFTO_BIT 17
+#define RXOVRR_BIT 20
 #define RXPTO_BIT 21
 #define RXSFDTO_BIT 26
 #define LDEERR_BIT 18
 #define RFPLL_LL_BIT 24
 #define CLKPLL_LL_BIT 25
+#define HSRBP_BIT 30
+#define ICRBP_BIT 31
 
 // system event mask register
 // NOTE: uses the bit definitions of SYS_STATUS (below 32)
@@ -298,9 +302,5 @@
 #define LEDSFD    1   // GPIO1: SFDLED  (SFD erkannt)
 #define LEDRX     2   // GPIO2: RXLED   (Empfänger aktiv)
 #define LEDTX     3   // GPIO3: TXLED   (Sender aktiv)
-
-#define HSRBP_BIT 29
-#define ICRBP_BIT 30
-#define HRBPT_BIT 24
 
 #endif
