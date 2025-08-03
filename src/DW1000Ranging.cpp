@@ -110,6 +110,9 @@ const uint8_t DW1000RangingClass::kPollDeviceSize = 4;
 ReceivedFrame DW1000RangingClass::rxQueue[QUEUE_SIZE] = {};
 volatile uint8_t DW1000RangingClass::rxHead = 0;
 volatile uint8_t DW1000RangingClass::rxTail = 0;
+uint8_t DW1000RangingClass::lastSentData[LEN_DATA];
+uint16_t DW1000RangingClass::lastSentLen = 0;
+
 
 bool DW1000RangingClass::getNextReceivedMessage(ReceivedFrame &frame) {
     if (rxTail == rxHead)
@@ -151,7 +154,7 @@ void DW1000RangingClass::configureNetwork(uint16_t deviceAddress, uint16_t netwo
 	DW1000.setNetworkId(networkId);
 	DW1000.setChannel(channel);
 	DW1000.enableMode(mode);
-	DW1000.useExtendedFrameLength(true); 
+	DW1000.useExtendedFrameLength(false); 
 	DW1000.enableDebounceClock();
 	DW1000.setGPIOMode(LEDRXOK, LED_MODE); // RXOKLED-Modus für GPIO0
 	DW1000.setGPIOMode(LEDSFD,  LED_MODE); // SFDLED-Modus für GPIO1
@@ -482,7 +485,7 @@ void DW1000RangingClass::handlePeriodicTasks(uint32_t currentTime, bool uwbSlot)
 }
 
 // Tag & Anchor
-void DW1000RangingClass::handleSentAck() {
+void DW1000RangingClass::handleSentAck() {  
 	// Check if an ACK has been sent
 	if (!_sentAck) {
 		return; // No action required
@@ -492,7 +495,7 @@ void DW1000RangingClass::handleSentAck() {
 	_sentAck = false;
 
 	// Determine the message type of the ACK sent
-	MessageType messageType = detectMessageType(data);
+	MessageType messageType = detectMessageType(lastSentData);
 
 	// If the message type is not relevant for the ranging logs, exit the function
 	if (messageType != POLL_ACK && messageType != POLL && messageType != RANGE) {
@@ -573,7 +576,7 @@ void DW1000RangingClass::handleReceivedMessage() {
 		switch (messageType) {
 			case BLINK:
 				if (_type == ANCHOR)
-					handleBlink();
+					handleBlink(frame.data);
 				break;
 			case RANGING_INIT:
 				if (_type == TAG)
@@ -588,10 +591,10 @@ void DW1000RangingClass::handleReceivedMessage() {
 
 
 // Anchor
-void DW1000RangingClass::handleBlink() {
+void DW1000RangingClass::handleBlink(const uint8_t* buffer) {
 	byte address[8];
 	byte shortAddress[2];
-	_globalMac.decodeBlinkFrame(data, address, shortAddress);
+	_globalMac.decodeBlinkFrame((byte*)buffer, address, shortAddress);
 
 	DW1000Device myTag(address, shortAddress);
 	if (addNetworkDevices(&myTag)) {
@@ -706,11 +709,11 @@ void DW1000RangingClass::handlePoll(DW1000Device* myDistantDevice, const DW1000T
 // Anchor
 void DW1000RangingClass::handleRange(DW1000Device* myDistantDevice, const ReceivedFrame& frame) {
 	uint8_t numberDevices = 0;
-	memcpy(&numberDevices, data + SHORT_MAC_LEN + 1, 1);
+	memcpy(&numberDevices, frame.data + SHORT_MAC_LEN + 1, 1);
 
 	for (uint8_t i = 0; i < numberDevices; i++) {
 		byte shortAddress[2];
-		memcpy(shortAddress, data + SHORT_MAC_LEN + 2 + i * 17, 2);
+		memcpy(shortAddress, frame.data + SHORT_MAC_LEN + 2 + i * 17, 2);
 
 		if (shortAddress[0] == _currentShortAddress[0] && shortAddress[1] == _currentShortAddress[1]) {
 			myDistantDevice->timeRangeReceived = frame.timestamp;
@@ -718,9 +721,9 @@ void DW1000RangingClass::handleRange(DW1000Device* myDistantDevice, const Receiv
 			_expectedMsgId = POLL;
 
 			if (!_protocolFailed) {
-				myDistantDevice->timePollSent.setTimestamp(data + SHORT_MAC_LEN + 4 + 17 * i);
-				myDistantDevice->timePollAckReceived.setTimestamp(data + SHORT_MAC_LEN + 9 + 17 * i);
-				myDistantDevice->timeRangeSent.setTimestamp(data + SHORT_MAC_LEN + 14 + 17 * i);
+				myDistantDevice->timePollSent.setTimestamp((byte*)frame.data + SHORT_MAC_LEN + 4 + 17 * i);
+				myDistantDevice->timePollAckReceived.setTimestamp((byte*)frame.data + SHORT_MAC_LEN + 9 + 17 * i);
+				myDistantDevice->timeRangeSent.setTimestamp((byte*)frame.data + SHORT_MAC_LEN + 14 + 17 * i);
 
 				DW1000Time myTOF;
 				computeRangeAsymmetric(myDistantDevice, &myTOF);
@@ -733,10 +736,10 @@ void DW1000RangingClass::handleRange(DW1000Device* myDistantDevice, const Receiv
 					}
 				}
 
-				myDistantDevice->setRXPower(frame.rxPower);
+				myDistantDevice->setRXPower(DW1000.getReceivePower());
 				myDistantDevice->setRange(distance);
-				myDistantDevice->setFPPower(frame.fpPower);
-    			myDistantDevice->setQuality(frame.quality);
+				myDistantDevice->setFPPower(DW1000.getFirstPathPower());
+				myDistantDevice->setQuality(DW1000.getReceiveQuality());
 
 				transmitRangeReport(myDistantDevice);
 				uint32_t currentTime = esp_timer_get_time()/MICROS_TO_MILLIS;
@@ -902,18 +905,24 @@ void DW1000RangingClass::transmitInit() {
 
 // Tag & Anchor
 void DW1000RangingClass::transmit(byte datas[]) {
+	memcpy(lastSentData, datas, LEN_DATA);
+    lastSentLen = LEN_DATA;
 	DW1000.setData(datas, LEN_DATA);
 	DW1000.startTransmit();
 }
 
 // Tag & Anchor
 void DW1000RangingClass::transmit(byte datas[], uint16_t len) {
+	memcpy(lastSentData, datas, len);
+    lastSentLen = len;
 	DW1000.setData(datas, len);
 	DW1000.startTransmit();
 }
 
 // Tag & Anchor
 void DW1000RangingClass::transmit(byte datas[], DW1000Time time) {
+	memcpy(lastSentData, datas, LEN_DATA);
+    lastSentLen = LEN_DATA;
 	DW1000.setDelay(time);
 	DW1000.setData(datas, LEN_DATA);
 	DW1000.startTransmit();
@@ -921,6 +930,8 @@ void DW1000RangingClass::transmit(byte datas[], DW1000Time time) {
 
 // Tag & Anchor
 void DW1000RangingClass::transmit(byte datas[], uint16_t len, DW1000Time time) {
+	memcpy(lastSentData, datas, len);
+    lastSentLen = len;
 	DW1000.setDelay(time);
 	DW1000.setData(datas, len);
 	DW1000.startTransmit();

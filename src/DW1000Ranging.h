@@ -77,9 +77,6 @@ struct ReceivedFrame {
     DW1000Time timestamp;
     uint16_t len;
     uint8_t data[LEN_DATA];
-	float rxPower;
-    float fpPower;
-    float quality;
 };
 
 //debug mode
@@ -94,6 +91,10 @@ public:
 	static ReceivedFrame rxQueue[QUEUE_SIZE]; 
     static volatile uint8_t rxHead;
 	static volatile uint8_t rxTail;
+	static uint8_t lastSentData[LEN_DATA];
+	static uint16_t lastSentLen;
+
+
 	//variables
 	static byte _channel;
 
@@ -245,7 +246,7 @@ private:
 	static void handleSentAckTag(MessageType messageType);
 	static void updateDeviceTimeStamps(byte* shortAddress, DW1000Time time, MessageType messageType);
 	static void handleReceivedMessage();
-	static void handleBlink();
+	static void handleBlink(const uint8_t* buffer);
 	static void handleRangingInit();
 	static void processShortMacMessage(MessageType messageType, const ReceivedFrame& frame );
 	static void processAnchorMessage(MessageType messageType, DW1000Device* myDistantDevice, const ReceivedFrame& frame );

@@ -761,9 +761,6 @@ void DW1000Class::processInterrupt(void *pvParameter) {
 						DW1000.getData(DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].data, len);
 						DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].len = len;
 						DW1000.getReceiveTimestamp(DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].timestamp);
-						DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].rxPower = DW1000.getReceivePower();
-						DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].fpPower = DW1000.getFirstPathPower();
-						DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].quality = DW1000.getReceiveQuality();
 						uint8_t writtenIdx = DW1000RangingClass::rxHead;
 						DW1000RangingClass::rxHead = nextHead;
 
