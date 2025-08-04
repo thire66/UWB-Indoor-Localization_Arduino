@@ -36,6 +36,7 @@ class DW1000Device;
 class DW1000Device {
 public:
 	//Constructor and destructor
+	static uint8_t _expectedMsgId;
 	DW1000Device();
 	DW1000Device(byte address[], byte shortAddress[]);
 	DW1000Device(byte address[], boolean shortOne = false);

@@ -25,6 +25,7 @@
 #include "DW1000Device.h"
 #include "DW1000.h"
 
+uint8_t DW1000Device::_expectedMsgId = -1;
 
 //Constructor and destructor
 DW1000Device::DW1000Device() {
@@ -115,15 +116,11 @@ void DW1000Device::randomShortAddress() {
 }
 
 void DW1000Device::noteActivity() {
-	_activity = millis();
+	_activity = esp_timer_get_time()/1000;
 }
 
 
 boolean DW1000Device::isInactive() {
-	//One second of inactivity
-	if(millis()-_activity > INACTIVITY_TIME) {
-		_activity = millis();
-		return true;
-	}
-	return false;
+    return (esp_timer_get_time()/1000 - _activity) > INACTIVITY_TIME;
 }
+

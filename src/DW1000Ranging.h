@@ -32,7 +32,9 @@
 #include "DW1000.h"
 #include "DW1000Time.h"
 #include "DW1000Device.h" 
-#include "DW1000Mac.h"
+#include "DW1000Mac.h" 
+
+#include "RingBuffer.h" 
 
 enum MessageType {
   ERROR = -1,
@@ -57,7 +59,7 @@ enum MessageType {
 
 //Default value
 
-#define DEFAULT_RESET_PERIOD 200 //in ms
+#define DEFAULT_RESET_PERIOD 2000 //in ms
 
 enum sketchType {
   TAG = 0,
@@ -73,27 +75,32 @@ struct DeviceIndices {
 const uint8_t MAX_BLINK_COUNTER = 20;
 
 #define QUEUE_SIZE 64// julian
-struct ReceivedFrame {
-    DW1000Time timestamp;
-    uint16_t len;
+
+#define TX_CONTEXT_QUEUE_SIZE 20  // Passe ggf. an, falls du mehr brauchst/willst
+struct PendingTxContext {
     uint8_t data[LEN_DATA];
+    size_t len;
+	DW1000Time txTimestamp; 
 };
+
+
 
 //debug mode
 #ifndef DEBUG
-#define DEBUG false
+#define DEBUG true
 #endif
 
 
 class DW1000RangingClass {
 public:
-	static bool getNextReceivedMessage(ReceivedFrame &frame); //julian
-	static ReceivedFrame rxQueue[QUEUE_SIZE]; 
+	//julian
     static volatile uint8_t rxHead;
 	static volatile uint8_t rxTail;
-	static uint8_t lastSentData[LEN_DATA];
-	static uint16_t lastSentLen;
-
+	static bool _uwbSlot;
+	
+	static DW1000FrameRingBuffer rxBuffer;
+	static DW1000FrameRingBuffer txBuffer;
+	static frame newTxFrame;
 
 	//variables
 	static byte _channel;
@@ -123,7 +130,8 @@ public:
 	//ranging functions
 	static MessageType detectMessageType(const byte datas[]); // TODO check return type
 	static void loop(bool uwbSlot);
-	static void handlePeriodicTasks(uint32_t currentTime, bool uwbSlot);
+	static void handleSentAck();
+	static void handlePeriodicTasks(bool uwbSlot);
 	static void useRangeFilter(boolean enabled);
 	// Used for the smoothing algorithm (Exponential Moving Average). newValue must be >= 2. Default 15.
 	static void setRangeFilterValue(uint16_t newValue);
@@ -133,12 +141,12 @@ public:
 	static void attachBlinkDevice(void (* handleBlinkDevice)(DW1000Device*)) { _handleBlinkDevice = handleBlinkDevice; };
 	static void attachNewDevice(void (* handleNewDevice)(DW1000Device*)) { _handleNewDevice = handleNewDevice; };
 	static void attachInactiveDevice(void (* handleInactiveDevice)(DW1000Device*)) { _handleInactiveDevice = handleInactiveDevice; };
-	
 	static DW1000Device* getDistantDevice();
 	static DW1000Device* searchDistantDevice(const byte shortAddress[]);
 	
 	//FOR DEBUGGING
 	static void visualizeDatas(byte datas[]);
+	static byte         _currentShortAddress[2];
 
 private:
 	static DW1000Device* _lastSlotDevices[4];    // julian Die 4 Devices des aktuellen Slots
@@ -150,7 +158,7 @@ private:
 	static volatile uint8_t _networkDevicesNumber;
 	static int16_t      _lastDistantDevice;
 	static byte         _currentAddress[8];
-	static byte         _currentShortAddress[2];
+	
 	static byte         _lastSentToShortAddress[2];
 	static DW1000Mac    _globalMac;
 	static uint32_t     timer;
@@ -240,21 +248,19 @@ private:
 	
 	//Utils
 	static float filterValue(float value, float previousValue, uint16_t numberOfElements);
-
-	static void handleSentAck();
-	static void handleSentAckAnchor(MessageType messageType);
-	static void handleSentAckTag(MessageType messageType);
+	static void handleSentAckAnchor(MessageType messageType, const uint8_t* data, DW1000Time txTimestamp);
+	static void handleSentAckTag(MessageType messageType, const uint8_t* data, DW1000Time txTimestamp);
 	static void updateDeviceTimeStamps(byte* shortAddress, DW1000Time time, MessageType messageType);
 	static void handleReceivedMessage();
 	static void handleBlink(const uint8_t* buffer);
-	static void handleRangingInit();
-	static void processShortMacMessage(MessageType messageType, const ReceivedFrame& frame );
-	static void processAnchorMessage(MessageType messageType, DW1000Device* myDistantDevice, const ReceivedFrame& frame );
-	static void handlePoll(DW1000Device* myDistantDevice, const DW1000Time& rxTimestamp);
-	static void handleRange(DW1000Device* myDistantDevice, const ReceivedFrame& frame);
-	static void processTagMessage(MessageType messageType, DW1000Device* myDistantDevice, const DW1000Time& rxTimestamp);
-	static void handleRangeReport(DW1000Device* device);
-	static void handlePollAck(DW1000Device* device, const DW1000Time& rxTimestamp);
+	static void handleRangingInit(const uint8_t* buffer);
+	static void processShortMacMessage(MessageType messageType, const frame& frame );
+	static void processAnchorMessage(MessageType messageType, DW1000Device* myDistantDevice, const frame& frame );
+	static void handlePoll(DW1000Device* myDistantDevice, const frame& frame);
+	static void handleRange(DW1000Device* myDistantDevice, const frame& frame);
+	static void processTagMessage(MessageType messageType, DW1000Device* myDistantDevice, const frame& frame );
+	static void handleRangeReport(DW1000Device* myDistantDevice, const frame& frame);
+	static void handlePollAck(DW1000Device* myDistantDevice, const frame& frame);
 
 	static bool isFirstBlock(uint16_t shortAddr);
 	static bool isSecondBlock(uint16_t shortAddr);

@@ -754,25 +754,28 @@ void DW1000Class::processInterrupt(void *pvParameter) {
             }
 
             if(isReceiveDone()) {
+				
 				uint16_t len = getDataLength();
-				if(len > 0 && len <= LEN_DATA) {
-					uint8_t nextHead = (DW1000RangingClass::rxHead + 1) % QUEUE_SIZE;
-					if (nextHead != DW1000RangingClass::rxTail) {
-						DW1000.getData(DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].data, len);
-						DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].len = len;
-						DW1000.getReceiveTimestamp(DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].timestamp);
-						uint8_t writtenIdx = DW1000RangingClass::rxHead;
-						DW1000RangingClass::rxHead = nextHead;
-
-						uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
-						uint8_t prevTail = DW1000RangingClass::rxTail;
-						// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
-						uint32_t sys_status = 0;
-						readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
-						uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
-						uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
-						Serial.printf("[Event] RX_Done - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
-									hsrbp, icrbp, prevHead, prevTail);
+				if(len > 0 && len <= LEN_DATA) {		
+					//getReceiveTimestamp(DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].timestamp);
+					uint32_t sys_status = 0;
+					readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
+					uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
+					uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
+					if (hsrbp != icrbp) {
+						frame newFrame;
+						newFrame.len = len;
+						getData(newFrame.data, len);
+						byte rxTimeBytes[LEN_RX_STAMP];
+						readBytes(RX_TIME, RX_STAMP_SUB, rxTimeBytes, LEN_RX_STAMP);
+						newFrame.timestamp = rxTimeBytes;
+						newFrame.receiveQuality = getReceiveQuality();
+						newFrame.firstPathPower = getFirstPathPower();
+						newFrame.receivePower = getReceivePower();
+						Serial.printf("\n[TS-OK] HSRBP:%d ICRBP:%d TS:0x%llX", hsrbp, icrbp);
+						if (DW1000RangingClass::rxBuffer.pushOverwrite(newFrame)) {
+							Serial.printf("\nFrame added");
+						}
 					}
 				}
 				
@@ -794,7 +797,7 @@ void DW1000Class::processInterrupt(void *pvParameter) {
                 toggleRxBufferPointer();
 				clearReceiveStatus();
 
-				uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
+				/*uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
 				uint8_t prevTail = DW1000RangingClass::rxTail;
 				// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
 				uint32_t sys_status = 0;
@@ -802,7 +805,7 @@ void DW1000Class::processInterrupt(void *pvParameter) {
 				uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
 				uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
 				Serial.printf("[Event] RX_FAILED - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
-							hsrbp, icrbp, prevHead, prevTail);
+							hsrbp, icrbp, prevHead, prevTail);*/
 
                 if(_permanentReceive) {
                     newReceive();
@@ -813,7 +816,7 @@ void DW1000Class::processInterrupt(void *pvParameter) {
                 toggleRxBufferPointer();
 				clearReceiveStatus();
 
-				uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
+				/*uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
 				uint8_t prevTail = DW1000RangingClass::rxTail;
 				// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
 				uint32_t sys_status = 0;
@@ -821,7 +824,7 @@ void DW1000Class::processInterrupt(void *pvParameter) {
 				uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
 				uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
 				Serial.printf("[Event] RX_TIMEOUT - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
-							hsrbp, icrbp, prevHead, prevTail);
+							hsrbp, icrbp, prevHead, prevTail);*/
 
                 if(_permanentReceive) {
                     newReceive();
@@ -840,7 +843,7 @@ void DW1000Class::processInterrupt(void *pvParameter) {
 				toggleRxBufferPointer();
 				clearReceiveStatus();
 
-				uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
+				/*uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
 				uint8_t prevTail = DW1000RangingClass::rxTail;
 				// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
 				uint32_t sys_status = 0;
@@ -848,7 +851,7 @@ void DW1000Class::processInterrupt(void *pvParameter) {
 				uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
 				uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
 				Serial.printf("[Event] RX_Overflow - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
-							hsrbp, icrbp, prevHead, prevTail);
+							hsrbp, icrbp, prevHead, prevTail);*/
 				if (_permanentReceive) {
 					newReceive();
 					startReceive();
@@ -887,10 +890,10 @@ void DW1000Class::alignDoubleBufferPointers() {
 		icrbp = (sys_status & (1UL << ICRBP_BIT)) ? 1 : 0;
     }
 	// Debug-Ausgabe nach Alignment:
-    Serial.print("[ALIGN] Result HSRBP: "); Serial.print(hsrbp);
+    Serial.print("\n[ALIGN] Result HSRBP: "); Serial.print(hsrbp);
     Serial.print(" | ICRBP: "); Serial.println(icrbp);
     if(hsrbp != icrbp) {
-        Serial.println("WARNING: Could not align DoubleBuffer Pointers!");
+        Serial.print("\nWARNING: Could not align DoubleBuffer Pointers!");
     }
 }
 
@@ -1451,11 +1454,11 @@ void DW1000Class::setDefaults(byte channel) {
 		setReceiverAutoReenable(true);
 		// default mode when powering up the chip
 		// still explicitly selected for later tuning
-		enableMode(MODE_LONGDATA_RANGE_LOWPOWER);
+		//enableMode(MODE_LONGDATA_RANGE_LOWPOWER);
 		
 		// TODO add channel and code to mode tuples
 	    // TODO add channel and code settings with checks (see DW1000 user manual 10.5 table 61)/
-	    setChannel(channel);
+	    //setChannel(channel);
 		/*if(getPulseFrequency() == TX_PULSE_FREQ_16MHZ) {
 			setPreambleCode(PREAMBLE_CODE_16MHZ_4);
 		} else {
