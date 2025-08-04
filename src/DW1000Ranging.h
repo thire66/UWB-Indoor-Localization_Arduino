@@ -74,30 +74,15 @@ struct DeviceIndices {
 
 const uint8_t MAX_BLINK_COUNTER = 20;
 
-#define QUEUE_SIZE 64// julian
-
-#define TX_CONTEXT_QUEUE_SIZE 20  // Passe ggf. an, falls du mehr brauchst/willst
-struct PendingTxContext {
-    uint8_t data[LEN_DATA];
-    size_t len;
-	DW1000Time txTimestamp; 
-};
-
-
-
 //debug mode
 #ifndef DEBUG
 #define DEBUG true
 #endif
 
-
 class DW1000RangingClass {
 public:
 	//julian
-    static volatile uint8_t rxHead;
-	static volatile uint8_t rxTail;
 	static bool _uwbSlot;
-	
 	static DW1000FrameRingBuffer rxBuffer;
 	static DW1000FrameRingBuffer txBuffer;
 	static frame newTxFrame;

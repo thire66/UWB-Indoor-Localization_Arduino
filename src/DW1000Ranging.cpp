@@ -161,11 +161,11 @@ void DW1000RangingClass::generalStart() {
         Serial.print("\nERROR: RX Ring Buffer initialization failed!");
         return;
     }
-    rxBuffer.printStatus();
 	if (!txBuffer.isValid()) {
         Serial.print("\nERROR: TX Ring Buffer initialization failed!");
         return;
     }
+	rxBuffer.printStatus();
     txBuffer.printStatus();
 	
 	DW1000.attachSentHandler(handleSent);
@@ -452,11 +452,10 @@ void DW1000RangingClass::loop(bool uwbSlot) {
 
 void DW1000RangingClass::handleSentAck() {
     frame currentFrame;
-    while (txBuffer.pop(currentFrame, pdMS_TO_TICKS(1))) {
+    if (txBuffer.pop(currentFrame, pdMS_TO_TICKS(1))) {
         MessageType lastSendMessageType = detectMessageType(currentFrame.data);
         if (lastSendMessageType != POLL_ACK && lastSendMessageType != POLL && lastSendMessageType != RANGE) {
             Serial.print("\nhandleSentAck: Ignore message type: " + String(lastSendMessageType));
-            continue;
         }
         switch (_type) {
             case ANCHOR:
@@ -474,8 +473,6 @@ void DW1000RangingClass::handleSentAck() {
     }
 }
 
-
-
 // Tag & Anchor
 void DW1000RangingClass::handlePeriodicTasks(bool uwbSlot) {
     // Check if timer has expired
@@ -486,10 +483,12 @@ void DW1000RangingClass::handlePeriodicTasks(bool uwbSlot) {
 
     // Tasks for TAGs
 	if (counterForBlink == 0) {
-		checkForInactiveDevices(); // Check for inactive devices (TAGs and ANCHORs)
 		if (_type == TAG) {
 			transmitBlink(); // Sending Blink signal
 		}
+		checkForInactiveDevices(); // Check for inactive devices (TAGs and ANCHORs)
+		rxBuffer.printStatus();
+    	txBuffer.printStatus();
 	} else if ( _networkDevicesNumber > 0 && _type == TAG){
 		transmitPoll(uwbSlot);
 	}
@@ -662,12 +661,12 @@ void DW1000RangingClass::processShortMacMessage(MessageType messageType, const f
 
 // Anchor
 void DW1000RangingClass::processAnchorMessage(MessageType messageType, DW1000Device* myDistantDevice,const frame& frame ) {
-	/*if (messageType != myDistantDevice->_expectedMsgId) {
+	if (messageType != myDistantDevice->_expectedMsgId) {
 		Serial.print("\nNot my _expectedMsgId: ");
 		Serial.print(myDistantDevice->_expectedMsgId);
 		_protocolFailed = true;
 		return;
-	}*/
+	}
 
 	if (messageType == POLL) {
 		handlePoll(myDistantDevice, frame);
@@ -710,7 +709,7 @@ void DW1000RangingClass::handlePoll(DW1000Device* myDistantDevice, const frame& 
 			_replyDelayTimeUS = *reinterpret_cast<const uint16_t*>(deviceData + 2);
 			_protocolFailed = false;
 			DW1000.getReceiveTimestamp(myDistantDevice->timePollReceived);
-			//myDistantDevice->_expectedMsgId = RANGE;
+			myDistantDevice->_expectedMsgId = RANGE;
 			transmitPollAck(myDistantDevice);
 			noteActivity();
 			return;  // Exit the loop once the device is found and processed
@@ -736,7 +735,7 @@ void DW1000RangingClass::handleRange(DW1000Device* myDistantDevice, const frame&
 		if (shortAddress[0] == _currentShortAddress[0] && shortAddress[1] == _currentShortAddress[1]) {
 			myDistantDevice->timeRangeReceived = frame.timestamp;
 			noteActivity();
-			//myDistantDevice->_expectedMsgId = POLL;
+			myDistantDevice->_expectedMsgId = POLL;
 
 			if (!_protocolFailed) {
 				myDistantDevice->timePollSent.setTimestamp((byte*)frame.data + SHORT_MAC_LEN + 4 + 17 * i);
@@ -784,13 +783,13 @@ void DW1000RangingClass::processTagMessage(MessageType messageType, DW1000Device
         return;
     }
 
-    /*if (messageType != myDistantDevice->_expectedMsgId) {
+    if (messageType != myDistantDevice->_expectedMsgId) {
         if(DEBUG){
             Serial.printf("\nUnexpected message type. Expected: %d, Received: %d\n", myDistantDevice->_expectedMsgId, messageType);
         }
         myDistantDevice->_expectedMsgId = POLL_ACK;
         return;
-    }*/
+    }
 
     switch (messageType) {
         case POLL_ACK:
@@ -816,7 +815,7 @@ void DW1000RangingClass::processTagMessage(MessageType messageType, DW1000Device
 void DW1000RangingClass::handlePollAck(DW1000Device* myDistantDevice, const frame& frame) {
 	myDistantDevice->timePollAckReceived = frame.timestamp;
     if(myDistantDevice->getIndex() == _networkDevicesNumber-1) {
-		//myDistantDevice->_expectedMsgId = RANGE_REPORT;
+		myDistantDevice->_expectedMsgId = RANGE_REPORT;
 		transmitRange();
 	}
 }

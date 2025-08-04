@@ -754,10 +754,8 @@ void DW1000Class::processInterrupt(void *pvParameter) {
             }
 
             if(isReceiveDone()) {
-				
 				uint16_t len = getDataLength();
 				if(len > 0 && len <= LEN_DATA) {		
-					//getReceiveTimestamp(DW1000RangingClass::rxQueue[DW1000RangingClass::rxHead].timestamp);
 					uint32_t sys_status = 0;
 					readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
 					uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
@@ -766,9 +764,7 @@ void DW1000Class::processInterrupt(void *pvParameter) {
 						frame newFrame;
 						newFrame.len = len;
 						getData(newFrame.data, len);
-						byte rxTimeBytes[LEN_RX_STAMP];
-						readBytes(RX_TIME, RX_STAMP_SUB, rxTimeBytes, LEN_RX_STAMP);
-						newFrame.timestamp = rxTimeBytes;
+						getReceiveTimestamp(newFrame.timestamp);
 						newFrame.receiveQuality = getReceiveQuality();
 						newFrame.firstPathPower = getFirstPathPower();
 						newFrame.receivePower = getReceivePower();
@@ -796,17 +792,6 @@ void DW1000Class::processInterrupt(void *pvParameter) {
                 
                 toggleRxBufferPointer();
 				clearReceiveStatus();
-
-				/*uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
-				uint8_t prevTail = DW1000RangingClass::rxTail;
-				// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
-				uint32_t sys_status = 0;
-				readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
-				uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
-				uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
-				Serial.printf("[Event] RX_FAILED - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
-							hsrbp, icrbp, prevHead, prevTail);*/
-
                 if(_permanentReceive) {
                     newReceive();
                     startReceive();
@@ -815,17 +800,6 @@ void DW1000Class::processInterrupt(void *pvParameter) {
             } else if(isReceiveTimeout()) {
                 toggleRxBufferPointer();
 				clearReceiveStatus();
-
-				/*uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
-				uint8_t prevTail = DW1000RangingClass::rxTail;
-				// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
-				uint32_t sys_status = 0;
-				readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
-				uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
-				uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
-				Serial.printf("[Event] RX_TIMEOUT - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
-							hsrbp, icrbp, prevHead, prevTail);*/
-
                 if(_permanentReceive) {
                     newReceive();
                     startReceive();
