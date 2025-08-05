@@ -59,7 +59,7 @@ enum MessageType {
 
 //Default value
 
-#define DEFAULT_RESET_PERIOD 2000 //in ms
+#define DEFAULT_RESET_PERIOD 5000 //in ms
 
 enum sketchType {
   TAG = 0,
@@ -76,7 +76,7 @@ const uint8_t MAX_BLINK_COUNTER = 20;
 
 //debug mode
 #ifndef DEBUG
-#define DEBUG true
+#define DEBUG false
 #endif
 
 class DW1000RangingClass {
@@ -87,18 +87,20 @@ public:
 	static DW1000FrameRingBuffer txBuffer;
 	static frame newTxFrame;
 
+	static TaskHandle_t uwbProcessingTaskHandle;
+	static void uwbProcessingTask(void *pvParameters);
+	static void handleRxEvent();
+	static void handleTxEvent();
+
 	//variables
 	static byte _channel;
 
-	// data buffer
-	static byte data[LEN_DATA];
-	
 	//initialisation
 	static void    initCommunication(uint8_t myRST = DEFAULT_RST_PIN, uint8_t mySS = DEFAULT_SPI_SS_PIN, uint8_t myIRQ = 2, const uint32_t Default_Timer_Delay = 80, const uint32_t Default_Replay_Delay_Time=7000);
 	static void    configureNetwork(uint16_t deviceAddress, uint16_t networkId, const byte mode[], const byte channel);
 	static void    generalStart();
-	static void    startAsAnchor(char address[], const byte mode[], const bool randomShortAddress, const byte channel);
-	static void    startAsTag(char address[], const byte mode[], const bool randomShortAddress, const byte channel);
+	static void    startAsAnchor(char address[], const byte mode[], const byte channel);
+	static void    startAsTag(char address[], const byte mode[], const byte channel);
 	static boolean addNetworkDevices(DW1000Device* device, boolean shortAddress);
 	static boolean addNetworkDevices(DW1000Device* device);
 	static void    removeNetworkDevices(int16_t index);
@@ -171,9 +173,7 @@ private:
 	// TODO check type, maybe enum?
 	// message flow state
 	static volatile byte    _expectedMsgId;
-	// message sent/received state
-	static volatile boolean _sentAck;
-	static volatile boolean _receivedAck;
+
 	// protocol error state
 	static boolean          _protocolFailed;
 	// reset line to the chip

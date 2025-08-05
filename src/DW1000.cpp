@@ -744,50 +744,25 @@ void DW1000Class::processInterrupt(void *pvParameter) {
 
             if(isClockProblem() && _handleError != 0) {
                 (*_handleError)();
-				continue;
             }
 
             else if(isTransmitDone() && _handleSent != 0) {
                 (*_handleSent)();
                 clearTransmitStatus();
-				continue;
+				DW1000RangingClass::handleTxEvent();
             }
 
-            if(isReceiveDone()) {
-				uint16_t len = getDataLength();
-				if(len > 0 && len <= LEN_DATA) {		
-					uint32_t sys_status = 0;
-					readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
-					uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
-					uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
-					if (hsrbp != icrbp) {
-						frame newFrame;
-						newFrame.len = len;
-						getData(newFrame.data, len);
-						getReceiveTimestamp(newFrame.timestamp);
-						newFrame.receiveQuality = getReceiveQuality();
-						newFrame.firstPathPower = getFirstPathPower();
-						newFrame.receivePower = getReceivePower();
-						Serial.printf("\n[TS-OK] HSRBP:%d ICRBP:%d TS:0x%llX", hsrbp, icrbp);
-						if (DW1000RangingClass::rxBuffer.pushOverwrite(newFrame)) {
-							Serial.printf("\nFrame added");
-						}
-					}
-				}
-				
-				if(_handleReceived != 0) {
-                    (*_handleReceived)();
-                }
+            if(isReceiveDone() && _handleReceived != 0 ) {
+				(*_handleReceived)();
 				//printActiveBuffer();
                 toggleRxBufferPointer();
-
                 clearReceiveStatus();
 
                 if(_permanentReceive) {
                     newReceive();
                     startReceive();
                 }
-				continue;
+				DW1000RangingClass::handleRxEvent();
             } else if(isReceiveFailed()) {
                 
                 toggleRxBufferPointer();
@@ -796,7 +771,6 @@ void DW1000Class::processInterrupt(void *pvParameter) {
                     newReceive();
                     startReceive();
                 }
-				continue;
             } else if(isReceiveTimeout()) {
                 toggleRxBufferPointer();
 				clearReceiveStatus();
@@ -804,36 +778,22 @@ void DW1000Class::processInterrupt(void *pvParameter) {
                     newReceive();
                     startReceive();
                 }
-				continue;
             }
 
             else if(isReceiveTimestampAvailable()) {
                 clearReceiveTimestampAvailableStatus();
-				continue;
             }
 
 			else if (isReceiveOverflow()) { 
-				// Log: Serial.println("RX_OVERFLOW");
 				toggleRxBufferPointer();
 				clearReceiveStatus();
-
-				/*uint8_t prevHead = DW1000RangingClass::rxHead; // Kopf des Buffers (wurde jetzt nicht erhöht)
-				uint8_t prevTail = DW1000RangingClass::rxTail;
-				// HW-Bufferstatus ausgeben (z.B. HSRBP_BIT/ICRBP_BIT):
-				uint32_t sys_status = 0;
-				readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
-				uint8_t hsrbp = (sys_status >> HSRBP_BIT) & 0x1;
-				uint8_t icrbp = (sys_status >> ICRBP_BIT) & 0x1;
-				Serial.printf("[Event] RX_Overflow - HSRBP: %d | ICRBP: %d | Head: %d | Tail: %d\n",
-							hsrbp, icrbp, prevHead, prevTail);*/
 				if (_permanentReceive) {
 					newReceive();
 					startReceive();
 				}
-				continue;
-			}
-
+			} 
             clearAllStatus();
+			
     }
     vTaskDelete(NULL);
 }

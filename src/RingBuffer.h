@@ -303,6 +303,6 @@ private:
 };
 
 // Spezialisierung für DW1000 Frames
-using DW1000FrameRingBuffer = ESP32RingBuffer<frame, 64>;
+using DW1000FrameRingBuffer = ESP32RingBuffer<frame, 16>;
 
 #endif // ESP32_RINGBUFFER_H
