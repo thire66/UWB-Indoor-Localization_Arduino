@@ -34,7 +34,7 @@
 #include "DW1000Device.h" 
 #include "DW1000Mac.h" 
 
-#include "RingBuffer.h" 
+
 
 enum MessageType {
   ERROR = -1,
@@ -48,7 +48,9 @@ enum MessageType {
   SYNC = 6
 };
 
-#define LEN_DATA 256
+#include "RingBuffer.h" 
+
+#define LEN_DATA 90
 
 //Max devices we put in the networkDevices array ! Each DW1000Device is 74 Bytes in SRAM memory for now.
 #define MAX_DEVICES 8 
@@ -83,8 +85,7 @@ class DW1000RangingClass {
 public:
 	//julian
 	static bool _uwbSlot;
-	static DW1000FrameRingBuffer rxBuffer;
-	static DW1000FrameRingBuffer txBuffer;
+	static UwbFrameBuffers buffers;
 	static frame newTxFrame;
 
 	static TaskHandle_t uwbProcessingTaskHandle;
@@ -101,7 +102,6 @@ public:
 	static void    generalStart();
 	static void    startAsAnchor(char address[], const byte mode[], const byte channel);
 	static void    startAsTag(char address[], const byte mode[], const byte channel);
-	static boolean addNetworkDevices(DW1000Device* device, boolean shortAddress);
 	static boolean addNetworkDevices(DW1000Device* device);
 	static void    removeNetworkDevices(int16_t index);
 	
@@ -213,8 +213,6 @@ private:
 	//for ranging protocole (ANCHOR)
 	static void transmitInit();
 	static void transmit(byte datas[], uint16_t len);
-	static void transmit(byte datas[]);
-	static void transmit(byte datas[], DW1000Time time);
 	static void transmit(byte datas[], uint16_t len, DW1000Time time);
 	static void transmitBlink();
 	static void transmitRangingInit(DW1000Device* myDistantDevice);

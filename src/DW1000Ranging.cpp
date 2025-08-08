@@ -102,8 +102,7 @@ const uint8_t DW1000RangingClass::kPollDeviceSize = 4;
 bool DW1000RangingClass::_uwbSlot;
 TaskHandle_t DW1000RangingClass::uwbProcessingTaskHandle;
 //frameBuffer
-DW1000FrameRingBuffer DW1000RangingClass::rxBuffer;
-DW1000FrameRingBuffer DW1000RangingClass::txBuffer;
+UwbFrameBuffers  DW1000RangingClass::buffers;
 frame DW1000RangingClass::newTxFrame;
 
 /* ###########################################################################
@@ -151,18 +150,7 @@ void DW1000RangingClass::configureNetwork(uint16_t deviceAddress, uint16_t netwo
  
 void DW1000RangingClass::generalStart() {
 	// attach callback for (successfully) sent and received messages
-	
-
-	if (!rxBuffer.isValid()) {
-        Serial.print("\nERROR: RX Ring Buffer initialization failed!");
-        return;
-    }
-	if (!txBuffer.isValid()) {
-        Serial.print("\nERROR: TX Ring Buffer initialization failed!");
-        return;
-    }
-	rxBuffer.printStatus();
-    txBuffer.printStatus();
+	buffers.init();
 	xTaskCreate(uwbProcessingTask, "UWB_PROC", 4*1024, nullptr, 2, &uwbProcessingTaskHandle);
 		
 	DW1000.attachSentHandler(handleSent);
@@ -262,36 +250,6 @@ void DW1000RangingClass::startAsTag(char address[], const byte mode[], const byt
 }
 
 // Tag & Anchor
-boolean DW1000RangingClass::addNetworkDevices(DW1000Device* device, boolean shortAddress) {
-    // Check if the device already exists in the network
-    for (uint8_t i = 0; i < _networkDevicesNumber; ++i) {
-        if ((!shortAddress && _networkDevices[i].isAddressEqual(device)) ||
-            (shortAddress && _networkDevices[i].isShortAddressEqual(device))) {
-            // The device already exists, do not add it again
-            return false;
-        }
-    }
-
-    // Check if there's space for a new device
-    if (_networkDevicesNumber >= MAX_DEVICES) {
-        return false; // No space left in the network devices array
-    }
-
-    // Add the new device to the network
-    device->setRange(0);
-    memcpy(&_networkDevices[_networkDevicesNumber], device, sizeof(DW1000Device));
-    _networkDevices[_networkDevicesNumber].setIndex(_networkDevicesNumber);
-    _networkDevicesNumber++;
-
-	if(DEBUG){
-		Serial.print("\nAdded device at index: " + String(_networkDevicesNumber - 1));
-		Serial.print(", Total devices: " + String(_networkDevicesNumber));
-	}
-    return true;
-}
-
-
-// Tag & Anchor
 boolean DW1000RangingClass::addNetworkDevices(DW1000Device* device) {
     if (_networkDevicesNumber >= MAX_DEVICES) 
 		return false;
@@ -316,31 +274,15 @@ boolean DW1000RangingClass::addNetworkDevices(DW1000Device* device) {
 
 // Tag & Anchor
 void DW1000RangingClass::removeNetworkDevices(int16_t index) {
-    if (index < 0 || index >= _networkDevicesNumber) {
-        // Invalid index, do nothing
+    if (index < 0 || index >= _networkDevicesNumber)
         return;
-    }
 
-    // If there is only one device, set the number to 0
-    if (_networkDevicesNumber == 1) {
-        _networkDevicesNumber = 0;
-        return;
-    }
-
-    // If the last element is being removed
-    if (index == _networkDevicesNumber - 1) {
-        _networkDevicesNumber--;
-        return;
-    }
-
-    // Shift all elements after the one being removed
-    for (uint8_t i = index; i < _networkDevicesNumber - 1; ++i) {
-        _networkDevices[i] = _networkDevices[i + 1]; // Direct assignment instead of memcpy
+    for (int16_t i = index; i < _networkDevicesNumber - 1; ++i) {
+        _networkDevices[i] = _networkDevices[i + 1]; 
         _networkDevices[i].setIndex(i);
     }
-    _networkDevicesNumber--; // Reduce the number of devices
+    _networkDevicesNumber--;
 }
-
 
 /* ###########################################################################
  * #### Setters and Getters ##################################################
@@ -375,7 +317,7 @@ DW1000Device* DW1000RangingClass::getDistantDevice() {
 
  // Tag & Anchor
 void DW1000RangingClass::checkForReset() {
-    if (rxBuffer.isEmpty() && txBuffer.isEmpty()) {
+    if (buffers.isRxEmpty() && buffers.isTxEmpty()) {
         if ((esp_timer_get_time()/MICROS_TO_MILLIS) - _lastActivity > _resetPeriod) {
             resetInactive();
         }
@@ -431,13 +373,14 @@ MessageType DW1000RangingClass::detectMessageType(const byte datas[]) {
 void DW1000RangingClass::loop(bool uwbSlot) {
     _uwbSlot = uwbSlot;
     checkForReset();
-	handlePeriodicTasks(uwbSlot); 
+	handlePeriodicTasks(uwbSlot);
 }
 
 void DW1000RangingClass::handleSentAck() {
     frame currentFrame;
-    if (txBuffer.pop(currentFrame, pdMS_TO_TICKS(1))) {
-        MessageType lastSendMessageType = detectMessageType(currentFrame.data);
+    if (!buffers.isTxEmpty()){
+		buffers.popTx(currentFrame);
+        MessageType lastSendMessageType = currentFrame.messageType;
         if (lastSendMessageType != POLL_ACK && lastSendMessageType != POLL && lastSendMessageType != RANGE) {
             Serial.print("\nhandleSentAck: Ignore message type: " + String(lastSendMessageType));
         }
@@ -489,7 +432,7 @@ void DW1000RangingClass::handleSentAckAnchor(MessageType messageType, const uint
         return; // Exit early if the message type is not relevant
     }
 	byte shortAddress[2];
-	_globalMac.decodeShortMACFrame((byte*)data, shortAddress);
+	_globalMac.decodeDestination((byte*)data, shortAddress);
     DW1000Device* myDistantDevice = searchDistantDevice(shortAddress);
     if (myDistantDevice) {
 		myDistantDevice->timePollAckSent = txTimestamp;
@@ -503,7 +446,7 @@ void DW1000RangingClass::handleSentAckTag(MessageType messageType, const uint8_t
 	}
 	// Retrieve the transmit timestamp for the specific message type (Poll, Range)
 	byte shortAddress[2];
-	_globalMac.decodeShortMACFrame((byte*)data, shortAddress);
+	_globalMac.decodeDestination((byte*)data, shortAddress);
 	updateDeviceTimeStamps(shortAddress, txTimestamp, messageType);
 }
 
@@ -551,7 +494,7 @@ void DW1000RangingClass::uwbProcessingTask(void *pvParameters){
 void DW1000RangingClass::handleRxEvent(){
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     // Setze Bit 0 für RX
-    vTaskNotifyGiveFromISR(uwbProcessingTaskHandle, &xHigherPriorityTaskWoken);
+    xTaskNotifyFromISR(uwbProcessingTaskHandle, 0x01, eSetBits, &xHigherPriorityTaskWoken);
     portYIELD_FROM_ISR();
 }
 
@@ -564,8 +507,9 @@ void DW1000RangingClass::handleTxEvent(){
 
 void DW1000RangingClass::handleReceivedMessage() {
 	frame currentFrame;
-    if(rxBuffer.pop(currentFrame, pdMS_TO_TICKS(2))) {   
-		MessageType messageType = detectMessageType(currentFrame.data);
+    if(!buffers.isRxEmpty()) {   
+		buffers.popRx(currentFrame);
+		MessageType messageType = currentFrame.messageType;
 		switch (messageType) {
 			case BLINK:
 				Serial.print("\n[DEBUG] handleReceivedMessage: BLINK empfangen!");
@@ -632,7 +576,7 @@ void DW1000RangingClass::handleRangingInit(const uint8_t* buffer) {
 		Serial.print(i < 7 ? ':' : ' ');
 	}
 	DW1000Device myAnchor(address, true);
-	if (addNetworkDevices(&myAnchor, true)) {
+	if (addNetworkDevices(&myAnchor)) {
 		// Suche das Objekt im Array
 		DW1000Device* realAnchor = searchDistantDevice(address);
 		if (realAnchor) {
@@ -702,10 +646,9 @@ void DW1000RangingClass::handlePoll(DW1000Device* myDistantDevice, const frame& 
     const uint8_t* deviceData = frame.data + SHORT_MAC_LEN + 2;
 
 	if(true){
-		Serial.print("\n\thandlePoll - numberDevices: ");
+		Serial.print("\nhandlePoll - numberDevices: ");
 		Serial.print(numberDevices);
-
-		Serial.print("\n\thandlePoll - deviceData = ");
+		Serial.print(", deviceData = ");
 		for (int i = 0; i < numberDevices * 4; ++i) { // Anzeige für alle Geräte (4 Bytes pro Gerät)
 			Serial.print(deviceData[i], HEX);
 			Serial.print(" ");
@@ -717,14 +660,13 @@ void DW1000RangingClass::handlePoll(DW1000Device* myDistantDevice, const frame& 
 		if (memcmp(currentDevice, _currentShortAddress, 2) == 0) {
 			_replyDelayTimeUS = *reinterpret_cast<const uint16_t*>(currentDevice + 2);
 			_protocolFailed = false;
-			DW1000.getReceiveTimestamp(myDistantDevice->timePollReceived);
+			myDistantDevice->timePollReceived = frame.timestamp;
 			myDistantDevice->_expectedMsgId = RANGE;
 			transmitPollAck(myDistantDevice);
 			noteActivity();
 			return;
 		}
 	}
-
 
 	if(DEBUG){
         Serial.print("\nhandlePoll: Device not found in the poll message");
@@ -875,28 +817,22 @@ void DW1000RangingClass::setRangeFilterValue(uint16_t newValue) {
 //julian 
 void DW1000RangingClass::handleSent() {
 	DW1000.getTransmitTimestamp(newTxFrame.timestamp);	
-	txBuffer.pushOverwrite(newTxFrame);
+	buffers.pushTxOverwrite(newTxFrame);
 }
 
 void DW1000RangingClass::handleReceived() {
-	uint16_t len = DW1000.getDataLength();
-	Serial.printf("\nhandleReceived");
-	if(len > 0 && len <= LEN_DATA) {			
-		frame newFrame;
-		newFrame.len = len;
-		DW1000.getData(newFrame.data, len);
-		DW1000.getReceiveTimestamp(newFrame.timestamp);
+	Serial.printf("\nhandleReceived");	
+	frame newFrame;
+	newFrame.len = DW1000.getDataLength();
+	DW1000.getReceiveTimestamp(newFrame.timestamp);
+	DW1000.getData(newFrame.data, newFrame.len);
+	newFrame.messageType = detectMessageType(newFrame.data);
+	if(newFrame.messageType == RANGE || newFrame.messageType == RANGE_REPORT){
 		newFrame.receiveQuality = DW1000.getReceiveQuality();
 		newFrame.firstPathPower = DW1000.getFirstPathPower();
 		newFrame.receivePower = DW1000.getReceivePower();
-		/*Serial.printf("\n[TS-OK] TS:0x%llX");
-		Serial.print("\n[DATA] ");
-        for (int i = 0; i < len; i++) {
-            if (i > 0) Serial.print(":");
-            Serial.printf("%02X", newFrame.data[i]);
-        }*/
-		rxBuffer.pushOverwrite(newFrame);	
 	}
+	buffers.pushRxOverwrite(newFrame);	
 }
 
 void DW1000RangingClass::noteActivity() {
@@ -929,31 +865,14 @@ void DW1000RangingClass::transmitInit() {
 	DW1000.newTransmit();
 }
 
-// Tag & Anchor
-void DW1000RangingClass::transmit(byte datas[]) {
-	newTxFrame = {};
-	memcpy(newTxFrame.data, datas, LEN_DATA);
-    newTxFrame.len = LEN_DATA;
-	DW1000.setData(datas, LEN_DATA);
-	DW1000.startTransmit();
-}
 
 // Tag & Anchor
 void DW1000RangingClass::transmit(byte datas[], uint16_t len) {
 	newTxFrame = {};
 	memcpy(newTxFrame.data, datas, len);
     newTxFrame.len = len;
+	newTxFrame.messageType = detectMessageType(newTxFrame.data);
 	DW1000.setData(datas, len);
-	DW1000.startTransmit();
-}
-
-// Tag & Anchor
-void DW1000RangingClass::transmit(byte datas[], DW1000Time time) {
-	newTxFrame = {};
-	memcpy(newTxFrame.data, datas, LEN_DATA);
-    newTxFrame.len = LEN_DATA;
-	DW1000.setDelay(time);
-	DW1000.setData(datas, LEN_DATA);
 	DW1000.startTransmit();
 }
 
@@ -962,6 +881,7 @@ void DW1000RangingClass::transmit(byte datas[], uint16_t len, DW1000Time time) {
 	newTxFrame = {};
 	memcpy(newTxFrame.data, datas, len);
     newTxFrame.len = len;
+	newTxFrame.messageType = detectMessageType(newTxFrame.data);
 	DW1000.setDelay(time);
 	DW1000.setData(datas, len);
 	DW1000.startTransmit();
@@ -1146,7 +1066,7 @@ void DW1000RangingClass::computeRangeAsymmetric(DW1000Device* myDistantDevice, D
 	DW1000Time reply2 = (myDistantDevice->timeRangeSent-myDistantDevice->timePollAckReceived).wrap();
 	
 	myTOF->setTimestamp((round1*round2-reply1*reply2)/(round1+round2+reply1+reply2));
-	if(DEBUG){
+	if(true){
 		Serial.print("\ntimePollAckReceived ");myDistantDevice->timePollAckReceived.print();
 		Serial.print("\ntimePollSent ");myDistantDevice->timePollSent.print();
 		Serial.print("\nround1 "); Serial.print((long)round1.getTimestamp());

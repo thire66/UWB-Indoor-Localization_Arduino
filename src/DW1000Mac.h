@@ -80,6 +80,7 @@ public:
 	//in order to decode the frame and save source Address!
 	void decodeBlinkFrame(byte frame[], byte address[], byte shortAddress[]);
 	void decodeShortMACFrame(byte frame[], byte address[]);
+	void decodeDestination(byte frame[], byte address[]);
 	void decodeMultiShortMACFrame(byte data[], byte address1[], byte address2[]);
 
 	void decodeLongMACFrame(byte frame[], byte address[]);

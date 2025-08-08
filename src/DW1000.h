@@ -38,7 +38,7 @@
 #include "DW1000Ranging.h"
 
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
+#include <freertos/task.h>  
 #include <freertos/semphr.h>
 
 
@@ -47,11 +47,12 @@ public:
 	//interupt
 	static TaskHandle_t xHandleUwbInterrupt;
 	static SemaphoreHandle_t interruptSemaphore;
+
 	static void processInterrupt(void *pvParameter);
 	static void printActiveBuffer();
 	static void alignDoubleBufferPointers();
 	static void toggleRxBufferPointer();
-	
+	static int64_t  _interruptT0;
 	
 	/* ##### Init ################################################################ */
 	/** 

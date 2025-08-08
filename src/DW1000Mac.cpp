@@ -187,6 +187,12 @@ void DW1000Mac::decodeShortMACFrame(byte frame[], byte address[]) {
 	//memcpy(destinationAddress, frame+5, 2);
 }
 
+void DW1000Mac::decodeDestination(byte frame[], byte address[]) {
+	byte destinationAddress[2];
+	memcpy(destinationAddress, frame+5, 2);
+	reverseArray(address, destinationAddress, 2);
+}
+
 void DW1000Mac::decodeMultiShortMACFrame(byte data[], byte address1[], byte address2[]) {
     memcpy(address1, data + 5, 2);
     memcpy(address2, data + 7, 2);
