@@ -21,7 +21,7 @@
  * @todo complete this class
  */
 
-#define INACTIVITY_TIME 2000
+#define INACTIVITY_TIME 200
 
 #ifndef _DW1000Device_H_INCLUDED
 #define _DW1000Device_H_INCLUDED
@@ -94,7 +94,7 @@ private:
 	//device ID
 	byte         _ownAddress[8];
 	byte         _shortAddress[2];
-	uint32_t      _activity;
+	int32_t      _activity;
 	uint16_t     _replyDelayTimeUS;
 	int8_t       _index; // not used
 	

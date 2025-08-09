@@ -61,7 +61,7 @@ enum MessageType {
 
 //Default value
 
-#define DEFAULT_RESET_PERIOD 5000 //in ms
+#define DEFAULT_RESET_PERIOD 1000 //in ms
 
 enum sketchType {
   TAG = 0,
@@ -155,9 +155,6 @@ private:
 	static uint32_t     roundTripTime;
 
 	static uint32_t MICROS_TO_MILLIS;
-
-	static uint8_t messageCounter;
-	static bool lastTimeslotState;
 
 	static const uint8_t kRangeDeviceSize;
 	static const uint8_t kPollDeviceSize;
