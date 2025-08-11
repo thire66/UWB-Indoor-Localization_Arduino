@@ -119,6 +119,7 @@ void DW1000Device::noteActivity() {
 	_activity = esp_timer_get_time()/1000;
 }
 
+
 boolean DW1000Device::isInactive() {
 	int32_t currentTime = esp_timer_get_time()/1000;
 	if((currentTime - _activity) > INACTIVITY_TIME)

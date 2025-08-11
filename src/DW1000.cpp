@@ -722,20 +722,13 @@ void DW1000Class::tune() {
  * #### Interrupt handling ###################################################
  * ######################################################################### */
 
-void IRAM_ATTR DW1000Class::handleInterrupt()
-{
+void IRAM_ATTR DW1000Class::handleInterrupt() {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    /* nur noch ein einziger Aufruf, Scheduler entscheidet selbst */
     xSemaphoreGiveFromISR(interruptSemaphore, &xHigherPriorityTaskWoken);
-
-    /* sofortiger Context-Switch, wenn nötig */
     if (xHigherPriorityTaskWoken == pdTRUE)
-        portYIELD_FROM_ISR();          // Macro ohne Parameter benutzen
+        portYIELD_FROM_ISR();
 }
 
-
-//julian
 void DW1000Class::processInterrupt(void *pvParameter) {
     for(;;){
 			xSemaphoreTake(interruptSemaphore, portMAX_DELAY);
@@ -798,13 +791,12 @@ void DW1000Class::processInterrupt(void *pvParameter) {
     vTaskDelete(NULL);
 }
 
-// Gibt 0 oder 1 zurück: aktiver Buffer
 void DW1000Class::printActiveBuffer() {
     uint32_t sys_status = 0;
 	readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
     Serial.print("\n");
-	Serial.print("HSRBP_BIT: "); Serial.println((sys_status >> HSRBP_BIT) & 0x1); //Host Side Receive Buffer Pointer (0: Buffer 0, 1: Buffer 1). Welchen Buffer sieht der Host?
-	Serial.print("ICRBP_BIT: "); Serial.println((sys_status >> ICRBP_BIT) & 0x1); //IC Side Receive Buffer Pointer (0: Buffer 0, 1: Buffer 1). WO wird das nächste Frame landen?
+	Serial.print("HSRBP_BIT: "); Serial.println((sys_status >> HSRBP_BIT) & 0x1); //Host Side Receive Buffer Pointer (0: Buffer 0, 1: Buffer 1).
+	Serial.print("ICRBP_BIT: "); Serial.println((sys_status >> ICRBP_BIT) & 0x1); //IC Side Receive Buffer Pointer (0: Buffer 0, 1: Buffer 1). 
 }
 
 void DW1000Class::alignDoubleBufferPointers() {
@@ -812,18 +804,15 @@ void DW1000Class::alignDoubleBufferPointers() {
     readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
     uint8_t hsrbp = (sys_status & (1UL << HSRBP_BIT)) ? 1 : 0;
 	uint8_t icrbp = (sys_status & (1UL << ICRBP_BIT)) ? 1 : 0;
-    int bailout = 10; // Maximal 10 Versuche!
+    int bailout = 10; 
     while (hsrbp != icrbp && bailout--) {
         // Toggle HRBPT
         toggleRxBufferPointer();
-
-        // Nochmals Register lesen
         readBytes(SYS_STATUS, 0x00, (uint8_t*)&sys_status, 4);
         //sys_status = __builtin_bswap32(sys_status);
         hsrbp = (sys_status & (1UL << HSRBP_BIT)) ? 1 : 0;
 		icrbp = (sys_status & (1UL << ICRBP_BIT)) ? 1 : 0;
     }
-	// Debug-Ausgabe nach Alignment:
     Serial.print("\n[ALIGN] Result HSRBP: "); Serial.print(hsrbp);
     Serial.print(" | ICRBP: "); Serial.println(icrbp);
     if(hsrbp != icrbp) {
@@ -832,16 +821,13 @@ void DW1000Class::alignDoubleBufferPointers() {
 }
 
 void DW1000Class::toggleRxBufferPointer() {
-    // Setze HRBPT Bit (Bit 2) im lokalen SYS_CTRL Shadow
     setBit(_sysctrl, LEN_SYS_CTRL, HRBPT_BIT, true);
-    // Schreibe das SYS_CTRL-Register, so dass das Toggle ausgelöst wird
     writeBytes(SYS_CTRL, NO_SUB, _sysctrl, LEN_SYS_CTRL);
-    // HRBPT Bit sofort wieder zurücksetzen (damit es nur ein Toggle ist)
     setBit(_sysctrl, LEN_SYS_CTRL, HRBPT_BIT, false);
 }
 
 boolean DW1000Class::isReceiveOverflow() {
-    return getBit(_sysstatus, LEN_SYS_STATUS, RXOVRR_BIT); // Bit siehe Handbuch!
+    return getBit(_sysstatus, LEN_SYS_STATUS, RXOVRR_BIT);
 }
 
 
@@ -1356,48 +1342,21 @@ void DW1000Class::setPreambleCode(byte preacode) {
 
 void DW1000Class::setDefaults(byte channel) {
 	if(_deviceMode == TX_MODE) {
-		
+		return;
 	} else if(_deviceMode == RX_MODE) {
-		
+		return;
 	} else if(_deviceMode == IDLE_MODE) {
 		useExtendedFrameLength(false);
 		useSmartPower(false);
 		suppressFrameCheck(false);
-		//for global frame filtering
 		setFrameFilter(false);
-
-		setDoubleBuffering(true);  //new value julian
-
-		/* old defaults with active frame filter - better set filter in every script where you really need it
-		setFrameFilter(true);
-
-		//for data frame (poll, poll_ack, range, range report, range failed) filtering
-		setFrameFilterAllowData(true);
-		
-		//for reserved (blink) frame filtering
-		setFrameFilterAllowReserved(true);
-		//setFrameFilterAllowMAC(true);
-		//setFrameFilterAllowBeacon(true);
-		//setFrameFilterAllowAcknowledgement(true);
-		*/
+		setDoubleBuffering(true);  
 		interruptOnSent(true);
 		interruptOnReceived(true);
 		interruptOnReceiveFailed(true);
 		interruptOnReceiveTimestampAvailable(false);
 		interruptOnAutomaticAcknowledgeTrigger(true);
 		setReceiverAutoReenable(true);
-		// default mode when powering up the chip
-		// still explicitly selected for later tuning
-		//enableMode(MODE_LONGDATA_RANGE_LOWPOWER);
-		
-		// TODO add channel and code to mode tuples
-	    // TODO add channel and code settings with checks (see DW1000 user manual 10.5 table 61)/
-	    //setChannel(channel);
-		/*if(getPulseFrequency() == TX_PULSE_FREQ_16MHZ) {
-			setPreambleCode(PREAMBLE_CODE_16MHZ_4);
-		} else {
-			setPreambleCode(PREAMBLE_CODE_64MHZ_10);
-		}*/
 	}
 }
 

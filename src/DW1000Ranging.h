@@ -83,7 +83,6 @@ const uint8_t MAX_BLINK_COUNTER = 20;
 
 class DW1000RangingClass {
 public:
-	//julian
 	static bool _uwbSlot;
 	static UwbFrameBuffers buffers;
 	static frame newTxFrame;
@@ -136,9 +135,9 @@ public:
 	static byte         _currentShortAddress[2];
 
 private:
-	static DW1000Device* _lastSlotDevices[4];    // julian Die 4 Devices des aktuellen Slots
-	static uint8_t _lastSlotDeviceCount;         // wie viele Devices im Slot sind
-	static bool _slotPollAcksReceived[4];        // Für dieses Slot-Set: ACK erhalten?
+	static DW1000Device* _lastSlotDevices[4];    
+	static uint8_t _lastSlotDeviceCount;        
+	static bool _slotPollAcksReceived[4];   
 
 	//other devices in the network
 	static DW1000Device _networkDevices[MAX_DEVICES];

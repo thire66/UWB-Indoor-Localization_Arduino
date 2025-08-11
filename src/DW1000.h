@@ -526,7 +526,7 @@ public:
 	static void clearTransmitStatus();
 	
 	/* internal helper to read/write system registers. */
-	static void readSystemEventStatusRegister(); //julian
+	static void readSystemEventStatusRegister();
 	static boolean isReceiveOverflow();
 
 	static void readSystemConfigurationRegister();
